@@ -1,0 +1,42 @@
+Source: ubuntu-miracast-server
+Section: video
+Priority: optional
+Maintainer: Ubuntu Miracast Team <example@example.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               python3-all,
+               python3-setuptools,
+               python3-gi,
+               python3-gst-1.0
+Standards-Version: 4.6.0
+Homepage: https://github.com/yourusername/ubuntu-miracast-server
+Rules-Requires-Root: no
+X-Python3-Version: >= 3.10
+
+Package: ubuntu-miracast-server
+Architecture: all
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         python3-gi,
+         python3-gst-1.0,
+         gir1.2-gtk-4.0,
+         gir1.2-adw-1,
+         gir1.2-gstreamer-1.0,
+         gir1.2-gst-plugins-base-1.0,
+         gstreamer1.0-plugins-good,
+         gstreamer1.0-plugins-bad,
+         wpasupplicant
+Recommends: gstreamer1.0-vaapi
+Description: Miracast server (sink) for Ubuntu
+ Ubuntu Miracast Server is a desktop application that acts as a
+ Miracast sink — receiving wireless screen casts from Miracast
+ source devices over Wi-Fi Direct.
+ .
+ Features:
+  * Receive Miracast wireless display streams
+  * Automatic device discovery via Wi-Fi Direct P2P
+  * Hardware-accelerated video decoding (VAAPI/NVDEC)
+  * Audio support (AAC)
+  * Session history tracking
+  * Optional headless systemd user service mode
+  * GTK 4 / libadwaita user interface

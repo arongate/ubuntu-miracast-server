@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Ubuntu Miracast Server
+Comment=Receive Miracast wireless display streams
+Exec=ubuntu-miracast-server
+Icon=video-display
+Terminal=false
+Type=Application
+Categories=Video;Network;
+Keywords=miracast;wireless;display;stream;sink;
