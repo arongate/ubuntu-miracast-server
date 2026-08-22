@@ -44,7 +44,7 @@ pip install -e .
 ubuntu-miracast-server
 ```
 
-Your machine will appear as "Ubuntu Miracast Server" in the Miracast/wireless display list on source devices. Connect from your phone or laptop to start casting.
+Your machine will appear as "Ubuntu Miracast Server" in the Miracast/wireless display list on source devices. A PIN will be displayed on screen — enter it on your phone/laptop to connect and start casting.
 
 ## Prerequisites
 
@@ -55,7 +55,7 @@ Your machine will appear as "Ubuntu Miracast Server" in the Miracast/wireless di
 
 > **Note:** Not all Wi-Fi adapters support P2P mode. Intel Wi-Fi 6 (AX200/AX201) and Qualcomm Atheros adapters are known to work. Check with `iw phy | grep P2P`.
 
-> **Important: Single-radio limitation.** Most laptop Wi-Fi adapters cannot simultaneously maintain a regular Wi-Fi connection (to your router) and a P2P connection (for Miracast). You may need to **disconnect from your Wi-Fi network** before casting, or use a secondary USB Wi-Fi adapter. See [Troubleshooting](docs/getting-started.md#single-radio-wi-fi-limitation-concurrent-connection-failure) for details.
+> **Important: Single-radio limitation.** Most laptop Wi-Fi adapters cannot simultaneously maintain a regular Wi-Fi connection (to your router) and a P2P connection (for Miracast). If you have a **secondary USB Wi-Fi adapter** (e.g., TP-Link AXE5400), the app will automatically use it for P2P while your built-in adapter stays connected to the internet — no configuration needed. Without a second adapter, you may need to disconnect from Wi-Fi to cast. See [Troubleshooting](docs/getting-started.md#single-radio-wi-fi-limitation-concurrent-connection-failure) for details.
 
 ### System Dependencies
 
@@ -177,8 +177,9 @@ See [docs/configuration.md](docs/configuration.md) for the full reference.
 ubuntu-miracast-server/
 ├── src/miracast_server/
 │   ├── app.py              # Application entry point, lifecycle, signal wiring
-│   ├── advertiser.py       # WFD sink P2P advertisement via wpa_supplicant
-│   ├── connection.py       # Wi-Fi Direct connection handling
+│   ├── advertiser.py       # P2P Group Owner creation and WFD advertisement
+│   ├── connection.py       # WPS PIN arming and AP-STA-CONNECTED monitoring
+│   ├── p2p_supplicant.py   # Dedicated wpa_supplicant instance manager
 │   ├── rtsp.py             # RTSP protocol parsing and WFD negotiation
 │   ├── receiver.py         # GStreamer pipeline and stream management
 │   ├── config.py           # Configuration management with validation
@@ -195,7 +196,7 @@ ubuntu-miracast-server/
 ├── debian/                 # Debian packaging
 ├── specs/                  # Design specifications
 ├── docs/                   # User documentation
-└── .kiro/                  # AI agent configuration
+└── .kiro/                  # AI agent configuration + protocol knowledge
 ```
 
 ## Development

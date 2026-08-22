@@ -80,7 +80,7 @@ flake8 src/ tests/
 ### Running Tests
 
 ```bash
-# Full test suite
+# Full test suite (221 tests)
 make test
 
 # With verbose output
@@ -90,10 +90,13 @@ pytest tests/ -v
 make coverage
 
 # Single test file
+pytest tests/test_advertiser.py -v
+pytest tests/test_connection.py -v
 pytest tests/test_rtsp.py -v
+pytest tests/test_integration.py -v
 
 # Single test
-pytest tests/test_models.py::TestIncomingConnection::test_valid_connection -v
+pytest tests/test_advertiser.py::TestMiracastAdvertiserStartStop::test_start_advertising_issues_correct_commands -v
 ```
 
 ### Writing Tests
@@ -111,18 +114,18 @@ Example test structure:
 
 from unittest.mock import patch, MagicMock
 import pytest
-from miracast_server.advertiser import MiracastAdvertiser, _encode_wfd_device_info_subelement
+from miracast_server.advertiser import MiracastAdvertiser, _encode_wfd_device_info
 
 
 class TestWFDSubelementEncoding:
     """Test WFD sub-element generation."""
 
     def test_default_port_encoding(self):
-        result = _encode_wfd_device_info_subelement(7236)
+        result = _encode_wfd_device_info(7236)
         assert "1C44" in result  # 7236 = 0x1C44
 
     def test_custom_port_encoding(self):
-        result = _encode_wfd_device_info_subelement(8000)
+        result = _encode_wfd_device_info(8000)
         assert "1F40" in result  # 8000 = 0x1F40
 
 
@@ -130,24 +133,30 @@ class TestMiracastAdvertiser:
     """Test advertiser lifecycle."""
 
     @patch("miracast_server.advertiser._run_wpa_cli")
-    @patch("miracast_server.advertiser._find_p2p_interface")
-    def test_start_advertising(self, mock_find, mock_wpa):
-        mock_find.return_value = ("p2p-dev-wlan0", "wlan0")
+    @patch("miracast_server.advertiser.MiracastAdvertiser._wait_for_group_interface")
+    def test_start_creates_go(self, mock_wait, mock_wpa):
         mock_wpa.return_value = "OK"
+        mock_wait.return_value = "p2p-wlx-0"
         
-        adv = MiracastAdvertiser()
-        adv.start_advertising()
+        adv = MiracastAdvertiser(p2p_interface="wlx123", ctrl_path="/tmp/ctrl")
+        with patch("miracast_server.advertiser.GLib.idle_add"):
+            adv.start_advertising()
         
         assert adv.is_advertising
+        assert adv.group_interface == "p2p-wlx-0"
+        assert any("p2p_group_add" in str(c) for c in mock_wpa.call_args_list)
 ```
 
 ### What to Test
 
 - ✅ Data validation (models, config rules)
 - ✅ Protocol parsing (RTSP messages, WFD parameters)
-- ✅ State transitions (advertiser start/stop, connection lifecycle)
-- ✅ Error handling (malformed input, timeouts, failures)
+- ✅ P2P GO creation (correct wpa_cli commands, ctrl_path propagation)
+- ✅ WPS PIN arming (correct interface, PIN format, re-arm after disconnect)
+- ✅ Connection lifecycle (AP-STA-CONNECTED → DHCP → connection-received)
+- ✅ Error handling (malformed input, timeouts, failures, NM rollback)
 - ✅ Security boundaries (parameter validation, size limits)
+- ✅ End-to-end integration (full flow with mocked wpa_cli)
 - ⚠️ GStreamer pipeline (mock element creation, verify structure)
 - ❌ Actual Wi-Fi Direct connections (manual testing only)
 - ❌ GTK rendering (manual testing only)

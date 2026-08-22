@@ -35,10 +35,15 @@ sudo apt install python3-gi python3-gst-1.0 \
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (221 tests)
 pytest tests/ -v
 
 # Run specific module tests
+pytest tests/test_advertiser.py -v
+pytest tests/test_connection.py -v
+pytest tests/test_rtsp.py -v
+pytest tests/test_p2p_supplicant.py -v
+pytest tests/test_integration.py -v
 pytest tests/test_models.py -v
 pytest tests/test_config.py -v
 
@@ -47,9 +52,11 @@ pytest tests/ --cov=miracast_server --cov-report=html
 ```
 
 - Tests use `tmp_path` for file isolation
-- External commands (wpa_cli, subprocess) are mocked
+- External commands (wpa_cli, subprocess) are mocked at the boundary
 - GStreamer elements are mocked — no display server needed
 - Tests run without network, Wi-Fi, or root access
+- **Integration tests** (`test_integration.py`) validate the complete flow:
+  startup → GO creation → WPS PIN arming → source connection → RTSP → disconnect → rearm
 
 ## Linting & Formatting
 
@@ -96,6 +103,7 @@ src/miracast_server/
 ├── app.py              # Entry point, lifecycle, CLI, signal wiring
 ├── advertiser.py       # WFD sink P2P advertisement (wpa_supplicant)
 ├── connection.py       # Wi-Fi Direct connection handling + DHCP
+├── p2p_supplicant.py   # Dedicated wpa_supplicant instance manager
 ├── rtsp.py             # RTSP protocol parsing (stateless, no I/O)
 ├── receiver.py         # GStreamer pipeline + RTSP session management
 ├── config.py           # JSON config with validation
@@ -108,10 +116,25 @@ src/miracast_server/
 
 ### Signal flow (GObject signals, all via GLib.idle_add from threads)
 
-1. `Advertiser` → advertising-started → `ConnectionHandler` starts listening
-2. `ConnectionHandler` → connection-received → `Receiver` starts RTSP
-3. `Receiver` → stream-started/stopped/error → `History` records + UI updates
-4. After stream ends → automatic return to advertising
+1. `Advertiser` → advertising-started(group_iface) → `ConnectionHandler` arms WPS PIN on group iface
+2. `ConnectionHandler` → pin-display(pin) → UI shows PIN
+3. `ConnectionHandler` → connection-received → `Receiver` starts RTSP
+4. `Receiver` → stream-started/stopped/error → `History` records + UI updates
+5. After stream ends → ConnectionHandler re-arms WPS PIN for next connection
+
+### P2P Architecture (Autonomous Group Owner)
+
+The app uses the **Autonomous GO** approach (same as lazycast/7herbert):
+1. Creates a P2P Group Owner (`p2p_group_add persistent`)
+2. Arms WPS PIN on the GROUP interface (`wps_pin any <PIN>`)
+3. Source discovers GO beacon and connects via WPS
+4. Monitor `AP-STA-CONNECTED` events on group interface
+
+This is MORE RELIABLE than GO Negotiation (p2p_listen) because:
+- No timing-sensitive PROV-DISC response needed
+- PIN is pre-armed, user has unlimited time to enter it
+- GO beacon is always discoverable (no p2p_listen timeout issues)
+- See `.kiro/miracast-p2p-protocol.md` for full protocol reference
 
 ### Threading rules
 
@@ -158,8 +181,10 @@ test: add property tests for RTSP CSeq
 
 ## Known Hardware Constraints
 
-- **Single-radio Wi-Fi adapters** cannot simultaneously maintain a regular Wi-Fi connection and a P2P group on different channels. This causes `EAP-FAILURE` / driver authentication failures after successful WPS exchange. Workaround: disconnect from Wi-Fi before Miracast, or use a second adapter.
-- The P2P group interface name is `p2p-wlo1-N` (where N increments). It's created by the kernel during group formation and may take several seconds to appear.
+- **Single-radio Wi-Fi adapters** cannot simultaneously maintain a regular Wi-Fi connection and a P2P group on different channels. The app handles this automatically by spawning a **dedicated wpa_supplicant instance** on a secondary USB adapter (if available). See `p2p_supplicant.py`.
+- When no secondary adapter is present, falls back to the system wpa_supplicant (may require Wi-Fi disconnection).
+- The P2P group interface name is `p2p-<parent>-N` (where N increments). It's created by the kernel during group formation.
+- Realtek drivers (rtw89) don't create a `p2p-dev-*` control socket; P2P commands go through the parent interface.
 
 ## Do Not Modify
 

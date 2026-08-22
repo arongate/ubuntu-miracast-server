@@ -183,12 +183,17 @@ def _validate_wpa_param(param: str) -> bool:
 
 
 def _find_p2p_interface() -> tuple[str | None, str | None]:
-    """Find the P2P device interface name.
+    """Find the best P2P-capable interface for Miracast.
 
-    Detects a P2P-capable Wi-Fi interface by looking at wpa_supplicant interfaces.
+    Detection logic:
+      1. Queries wpa_supplicant for available interfaces
+      2. Finds p2p-dev-* interfaces (Intel-style) and wl* interfaces (Realtek-style)
+      3. Prefers a disconnected/dedicated adapter over one already connected to a router
+      4. For Realtek-style adapters, verifies P2P support by testing 'p2p_find'
 
     Returns:
-        Tuple of (p2p_interface, wifi_interface) or (None, None) if not found.
+        Tuple of (p2p_interface, wifi_interface). The p2p_interface is what to
+        pass to wpa_cli for P2P commands.
 
     Raises:
         RuntimeError: If no P2P-capable interface is detected.
@@ -207,23 +212,112 @@ def _find_p2p_interface() -> tuple[str | None, str | None]:
             )
 
         lines = result.stdout.strip().split("\n")
-        p2p_iface = None
-        wifi_iface = None
+
+        # Collect all candidates
+        p2p_dev_interfaces = []  # p2p-dev-* style (Intel)
+        wifi_interfaces = []  # wl* style (potential Realtek P2P)
+
         for line in lines:
             line = line.strip()
             if line.startswith("p2p-dev-"):
-                p2p_iface = line
-                wifi_iface = line.replace("p2p-dev-", "")
-            elif line.startswith("wl") and not wifi_iface:
-                wifi_iface = line
+                parent = line.replace("p2p-dev-", "")
+                p2p_dev_interfaces.append((line, parent))
+            elif line.startswith("wl"):
+                wifi_interfaces.append(line)
 
-        if not p2p_iface:
-            raise RuntimeError(
-                "No P2P-capable interface detected. "
-                "Ensure Wi-Fi is enabled and wpa_supplicant has P2P support."
-            )
+        # Strategy: prefer a dedicated (disconnected) adapter to avoid
+        # single-radio channel conflicts with the router connection.
 
-        return p2p_iface, wifi_iface
+        # First, check wifi interfaces for Realtek-style P2P support (no p2p-dev-* socket).
+        # These are typically dedicated USB adapters not connected to a router.
+        for wifi_iface in wifi_interfaces:
+            # Skip if it's a parent of an already-found p2p-dev interface
+            if any(parent == wifi_iface for _, parent in p2p_dev_interfaces):
+                continue
+            # Test if this interface supports P2P commands
+            try:
+                test_result = subprocess.run(
+                    ["sudo", "wpa_cli", "-i", wifi_iface, "p2p_find", "1"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if test_result.returncode == 0 and "OK" in test_result.stdout:
+                    # Stop the test find immediately
+                    subprocess.run(
+                        ["sudo", "wpa_cli", "-i", wifi_iface, "p2p_stop_find"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    # Check if disconnected (preferred for dedicated P2P use)
+                    status = subprocess.run(
+                        ["sudo", "wpa_cli", "-i", wifi_iface, "status"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if status.returncode == 0 and "wpa_state=COMPLETED" not in status.stdout:
+                        logger.info(
+                            "Using %s for P2P (dedicated adapter, not connected to router)",
+                            wifi_iface,
+                        )
+                        return wifi_iface, wifi_iface
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+
+        # Next, check p2p-dev-* interfaces — prefer one whose parent is disconnected
+        if p2p_dev_interfaces:
+            best_p2p = None
+            fallback_p2p = None
+            for p2p_iface, parent in p2p_dev_interfaces:
+                try:
+                    status = subprocess.run(
+                        ["sudo", "wpa_cli", "-i", parent, "status"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if status.returncode == 0:
+                        if "wpa_state=COMPLETED" in status.stdout:
+                            fallback_p2p = (p2p_iface, parent)
+                        else:
+                            best_p2p = (p2p_iface, parent)
+                            break
+                except (subprocess.TimeoutExpired, OSError):
+                    fallback_p2p = (p2p_iface, parent)
+
+            chosen = best_p2p or fallback_p2p
+            if chosen:
+                return chosen
+
+        # Last fallback: any wifi interface with P2P support
+        for wifi_iface in wifi_interfaces:
+            if any(parent == wifi_iface for _, parent in p2p_dev_interfaces):
+                continue
+            try:
+                test_result = subprocess.run(
+                    ["sudo", "wpa_cli", "-i", wifi_iface, "p2p_find", "1"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if test_result.returncode == 0 and "OK" in test_result.stdout:
+                    subprocess.run(
+                        ["sudo", "wpa_cli", "-i", wifi_iface, "p2p_stop_find"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    logger.info("Using %s for P2P (Realtek-style)", wifi_iface)
+                    return wifi_iface, wifi_iface
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+
+        raise RuntimeError(
+            "No P2P-capable interface detected. "
+            "Ensure Wi-Fi is enabled and wpa_supplicant has P2P support."
+        )
     except subprocess.TimeoutExpired as e:
         logger.error(f"Timeout finding P2P interface: {e}")
         raise RuntimeError("Timeout communicating with wpa_supplicant.") from e
@@ -235,7 +329,8 @@ def _find_p2p_interface() -> tuple[str | None, str | None]:
         ) from e
 
 
-def _run_wpa_cli(interface: str, *args: str, skip_last_validation: bool = False) -> str:
+def _run_wpa_cli(interface: str, *args: str, skip_last_validation: bool = False,
+                 ctrl_path: str | None = None) -> str:
     """Run a wpa_cli command with parameter validation.
 
     All parameters are validated against an allowlist (alphanumeric, colons,
@@ -248,6 +343,8 @@ def _run_wpa_cli(interface: str, *args: str, skip_last_validation: bool = False)
             user-provided value (e.g., device_name) and is not validated
             against the strict allowlist. Still safe because subprocess
             uses list format (no shell injection).
+        ctrl_path: Optional control socket directory for a dedicated
+            wpa_supplicant instance. If provided, uses -p flag.
 
     Returns:
         The stdout output from the wpa_cli command.
@@ -273,7 +370,11 @@ def _run_wpa_cli(interface: str, *args: str, skip_last_validation: bool = False)
             )
 
     # Build command as a list (no shell=True)
-    cmd = ["sudo", "wpa_cli", "-i", interface] + list(args)
+    cmd = ["sudo", "wpa_cli"]
+    if ctrl_path:
+        cmd.extend(["-p", ctrl_path])
+    cmd.extend(["-i", interface])
+    cmd.extend(list(args))
 
     try:
         result = subprocess.run(

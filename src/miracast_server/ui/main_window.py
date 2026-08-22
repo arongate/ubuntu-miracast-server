@@ -194,7 +194,7 @@ class MainWindow(Adw.ApplicationWindow):
                 return True
         return False
 
-    def _on_advertising_started(self, advertiser) -> None:
+    def _on_advertising_started(self, advertiser, group_interface: str) -> None:
         device_name = self.config.get("general", "device_name", "Ubuntu Miracast Server")
         self._status_label.set_text(f"Advertising as '{device_name}'")
         self._display_view.set_state_idle(device_name)

@@ -119,7 +119,7 @@ Key configuration options relevant to service mode:
 | Option | Description |
 |--------|-------------|
 | `general.device_name` | Name visible to Miracast sources |
-| `network.auto_accept` | Should be `true` for unattended operation |
+| `network.auto_accept` | Should be `true` for unattended operation (auto-arms WPS PIN) |
 | `service.idle_timeout` | Auto-shutdown after N seconds idle |
 | `streaming.rtsp_port` | Must not conflict with other services |
 | `network.rtp_port` | Must not conflict with other services |

@@ -8,6 +8,7 @@ import argparse
 import logging
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from miracast_server.config import ServerConfig
 from miracast_server.connection import ConnectionHandler
 from miracast_server.history import ServerSessionHistory
 from miracast_server.models import SourceInfo
+from miracast_server.p2p_supplicant import P2PSupplicantManager
 from miracast_server.receiver import MiracastReceiver
 
 # Configure logging
@@ -103,6 +105,7 @@ class MiracastServerApp(Adw.Application):
         self.advertiser: MiracastAdvertiser | None = None
         self.connection_handler: ConnectionHandler | None = None
         self.receiver: MiracastReceiver | None = None
+        self.p2p_supplicant: P2PSupplicantManager | None = None
 
         self.connect("activate", self._on_activate)
         self.connect("shutdown", self._on_shutdown)
@@ -130,10 +133,21 @@ class MiracastServerApp(Adw.Application):
             or None
         )
 
+        # Try to start a dedicated wpa_supplicant for a secondary adapter.
+        # This allows the primary adapter to stay connected to Wi-Fi (internet)
+        # while the secondary handles Miracast P2P.
+        self._start_dedicated_supplicant(p2p_interface, device_name)
+
+        # If dedicated supplicant is running, use its interface; otherwise auto-detect
+        effective_interface = None
+        if self.p2p_supplicant and self.p2p_supplicant.is_running:
+            effective_interface = self.p2p_supplicant.interface
+
         self.advertiser = MiracastAdvertiser(
             device_name=device_name,
             rtsp_port=rtsp_port,
-            p2p_interface=p2p_interface,
+            p2p_interface=effective_interface or p2p_interface,
+            ctrl_path=self.p2p_supplicant.ctrl_path if self.p2p_supplicant else None,
         )
 
         self.receiver = MiracastReceiver(
@@ -176,27 +190,91 @@ class MiracastServerApp(Adw.Application):
     def _get_or_create_connection_handler(
         self, go_intent: int, auto_accept: bool, timeout: int
     ) -> ConnectionHandler:
-        """Get or create the connection handler.
-
-        Uses a placeholder interface that gets updated once the advertiser
-        detects the real P2P interface.
-        """
+        """Get or create the connection handler."""
         if self.connection_handler is None:
-            # Use a default interface name — will be updated
             self.connection_handler = ConnectionHandler(
-                p2p_interface="p2p-dev-wlan0",
-                go_intent=go_intent,
+                p2p_interface=self.advertiser.p2p_interface if self.advertiser else "",
                 auto_accept=auto_accept,
                 connection_timeout=timeout,
             )
         return self.connection_handler
 
-    def _on_advertiser_started(self, advertiser) -> None:
-        """Once advertising starts, update connection handler with real interface."""
-        if advertiser.p2p_interface and self.connection_handler:
-            self.connection_handler._p2p_interface = advertiser.p2p_interface
-            self.connection_handler.start_listening()
-            logger.info("Connection handler started on %s", advertiser.p2p_interface)
+    def _on_advertiser_started(self, advertiser, group_interface: str) -> None:
+        """When the P2P GO is created, start listening for connections on it.
+
+        The advertiser created a Group Owner. Now we arm WPS PIN on the
+        group interface and wait for AP-STA-CONNECTED events.
+        """
+        if not group_interface or not self.connection_handler:
+            return
+
+        logger.info("P2P GO active on %s — starting connection handler", group_interface)
+
+        # Set the control path for wpa_cli commands on the group interface
+        if self.p2p_supplicant and self.p2p_supplicant.is_running:
+            self.connection_handler._ctrl_path = self.p2p_supplicant.ctrl_path
+
+        # Start listening on the group interface (arms WPS + monitors events)
+        self.connection_handler.start_listening(group_interface)
+
+    def _start_dedicated_supplicant(
+        self, p2p_interface: str | None, device_name: str
+    ) -> None:
+        """Try to start a dedicated wpa_supplicant on a secondary adapter.
+
+        Looks for a disconnected Wi-Fi adapter suitable for P2P, starts a
+        dedicated wpa_supplicant on it, so the primary adapter stays connected.
+        """
+        from miracast_server.utils import list_p2p_interfaces
+
+        # Find a suitable adapter: disconnected from router, P2P-capable
+        target_iface = None
+
+        if p2p_interface:
+            # User specified an interface — use its parent
+            target_iface = p2p_interface.replace("p2p-dev-", "") if p2p_interface.startswith("p2p-dev-") else p2p_interface
+        else:
+            # Auto-detect: find a disconnected adapter not used for internet
+            interfaces = list_p2p_interfaces()
+            for iface_info in interfaces:
+                parent = iface_info["parent"]
+                if iface_info["status"] != "connected":
+                    target_iface = parent
+                    logger.info("Auto-selected %s for dedicated P2P supplicant", parent)
+                    break
+
+        if not target_iface:
+            logger.info("No dedicated adapter available; using system wpa_supplicant")
+            return
+
+        # Don't start a dedicated instance on an adapter already in use for internet
+        try:
+            result = subprocess.run(
+                ["sudo", "wpa_cli", "-i", target_iface, "status"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and "wpa_state=COMPLETED" in result.stdout:
+                logger.info(
+                    "Adapter %s is connected to Wi-Fi — not starting dedicated supplicant",
+                    target_iface,
+                )
+                return
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+        # Start the dedicated instance
+        try:
+            self.p2p_supplicant = P2PSupplicantManager(
+                interface=target_iface,
+                device_name=device_name,
+            )
+            self.p2p_supplicant.start()
+            logger.info("Dedicated P2P wpa_supplicant started on %s", target_iface)
+        except RuntimeError as e:
+            logger.warning("Could not start dedicated supplicant: %s — falling back", e)
+            self.p2p_supplicant = None
 
     def _wire_signals(self) -> None:
         """Wire GObject signals between core components for functional flow.
@@ -248,21 +326,16 @@ class MiracastServerApp(Adw.Application):
         self._return_to_advertising()
 
     def _return_to_advertising(self) -> None:
-        """Return to advertising/listening state after stream ends or connection error."""
+        """Return to listening state after stream ends or connection error.
+
+        With Autonomous GO, the group stays active — we just re-arm the
+        WPS PIN for the next connection attempt.
+        """
         if self._shutting_down:
             return
-        # Always restart advertising to ensure we're discoverable again
-        if self.advertiser:
-            if self.advertiser.is_advertising:
-                # Already advertising but may have left P2P listen — re-enter
-                try:
-                    from miracast_server.utils import _run_wpa_cli
-                    _run_wpa_cli(self.advertiser.p2p_interface, "p2p_listen")
-                    logger.info("Re-entered P2P listen state")
-                except Exception as e:
-                    logger.debug("p2p_listen re-entry: %s", e)
-            else:
-                self.advertiser.start_advertising()
+        if self.connection_handler:
+            self.connection_handler.rearm_wps_pin()
+            logger.info("Ready for next connection (WPS PIN re-armed)")
 
     def switch_interface(self, new_interface: str) -> None:
         """Switch the P2P interface at runtime.
@@ -332,6 +405,13 @@ class MiracastServerApp(Adw.Application):
                 self.advertiser.stop_advertising()
             except Exception as e:
                 logger.error("Error stopping advertiser: %s", e)
+
+        # 4. Stop dedicated wpa_supplicant (if running) and restore NM management
+        if self.p2p_supplicant:
+            try:
+                self.p2p_supplicant.stop()
+            except Exception as e:
+                logger.error("Error stopping P2P supplicant: %s", e)
 
         logger.info("Graceful shutdown complete")
 

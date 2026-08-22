@@ -16,10 +16,19 @@ Utility Layer (utils, service)         — security helpers, systemd
 
 Components communicate via GObject signals. The flow is:
 
-1. `Advertiser` → advertising-started → `ConnectionHandler` starts listening
-2. `ConnectionHandler` → connection-received → `Receiver` starts RTSP
-3. `Receiver` → stream-started/stopped/error → `History` records + UI updates
-4. After stream ends → automatic return to advertising state
+1. `Advertiser` → advertising-started(group_iface) → `ConnectionHandler` arms WPS PIN
+2. `ConnectionHandler` → pin-display(pin) → UI shows PIN on screen
+3. Source enters PIN → AP-STA-CONNECTED on group interface
+4. `ConnectionHandler` → connection-received → `Receiver` starts RTSP
+5. `Receiver` → stream-started/stopped/error → `History` records + UI updates
+6. After stream ends → ConnectionHandler re-arms WPS PIN
+
+### P2P Architecture (Autonomous Group Owner)
+
+Uses `p2p_group_add persistent` to create a GO, then `wps_pin any <PIN>` on the GROUP interface.
+This is the proven approach (lazycast/7herbert). See `.kiro/miracast-p2p-protocol.md`.
+
+DO NOT use `p2p_listen` + GO Negotiation — it's unreliable and was the cause of all P2P failures.
 
 ### Threading
 

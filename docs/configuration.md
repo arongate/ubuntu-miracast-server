@@ -32,9 +32,9 @@ The file is created automatically on first run with default values. It uses 0600
 
 | Key | Type | Default | Validation | Description |
 |-----|------|---------|------------|-------------|
-| `go_intent` | int | `15` | 0–15 | P2P Group Owner intent (higher = prefer being GO) |
-| `connection_timeout` | int | `30` | 1–120 | Seconds to wait for P2P group formation |
-| `auto_accept` | bool | `true` | — | Automatically accept incoming connection requests |
+| `go_intent` | int | `15` | 0–15 | P2P Group Owner intent (always GO in autonomous mode) |
+| `connection_timeout` | int | `30` | 1–120 | Seconds to wait for WPS PIN entry |
+| `auto_accept` | bool | `true` | — | Automatically arm WPS PIN on startup |
 | `rtp_port` | int | `1028` | 1024–65535 | UDP port for RTP media reception |
 | `p2p_interface` | string | `""` | — | Override P2P interface (auto-detected if empty) |
 | `listen_channel` | int | `0` | — | P2P listen channel (0 = auto) |

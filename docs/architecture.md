@@ -33,18 +33,17 @@ This document describes the internal architecture of Ubuntu Miracast Server — 
 
 ### `advertiser.py` — WFD Sink Advertisement
 
-- Interfaces with wpa_supplicant via `wpa_cli`
-- Sets WFD sub-elements (Device Info, Associated BSSID, Coupled Sink)
-- Enters P2P listen state for discoverability
-- Emits: `advertising-started`, `advertising-stopped`, `advertising-error`
+- Creates an Autonomous P2P Group Owner (`p2p_group_add persistent`)
+- Sets WFD sub-elements (Device Info, Associated BSSID, Coupled Sink) 
+- The GO beacon makes the sink discoverable (no `p2p_listen` needed)
+- Emits: `advertising-started(group_iface)`, `advertising-stopped`, `advertising-error`
 
 ### `connection.py` — Wi-Fi Direct Connection Handler
 
-- Spawns a daemon thread monitoring wpa_cli events
-- Handles `P2P-GO-NEG-REQUEST`, `P2P-GROUP-STARTED`, `P2P-GROUP-REMOVED`
-- Performs DHCP after group formation (dhclient as client, dnsmasq as GO)
-- Enforces single-connection invariant
-- Emits: `connection-received`, `connection-lost`, `connection-error`
+- Arms WPS PIN on the GROUP interface (`wps_pin any <PIN>`)
+- Monitors GROUP interface for `AP-STA-CONNECTED` / `AP-STA-DISCONNECTED` events
+- Sets up DHCP on the group interface (static IP + dnsmasq)
+- Emits: `connection-received`, `connection-lost`, `connection-error`, `pin-display`
 
 ### `rtsp.py` — RTSP Protocol Layer
 
@@ -94,39 +93,41 @@ This document describes the internal architecture of Ubuntu Miracast Server — 
 The application is event-driven using GObject signals. All signals are emitted on the GTK main thread via `GLib.idle_add()`.
 
 ```
-┌──────────────┐         ┌───────────────────┐         ┌─────────────────┐
-│  Advertiser  │────────>│ ConnectionHandler  │────────>│ MiracastReceiver│
-│              │ started  │                   │ received │                 │
-└──────────────┘         └───────────────────┘         └─────────────────┘
-       │                          │                           │
-       │                          │                           │ stream-stopped
-       │                          │                           │ stream-error
-       │                          │                           ▼
-       │                          │                    ┌──────────────┐
-       │                          │                    │   History    │
-       │                          │                    │ add_session()│
-       │                          │                    └──────────────┘
-       │                          │                           │
-       ◄──────────────────────────┼───────────────────────────┘
-       │            return to advertising                      
+┌──────────────┐  started(iface)  ┌───────────────────┐  pin-display    ┌──────────┐
+│  Advertiser  │─────────────────>│ ConnectionHandler  │───────────────>│    UI    │
+│ (creates GO) │                  │ (arms WPS PIN)     │                │(shows PIN│
+└──────────────┘                  └───────────────────┘                └──────────┘
+                                          │                              
+                                          │ connection-received          
+                                          ▼                              
+                                  ┌─────────────────┐                   
+                                  │ MiracastReceiver │                   
+                                  │ (RTSP + pipeline)│                   
+                                  └─────────────────┘                   
+                                          │ stream-stopped/error         
+                                          ▼                              
+                                  ┌──────────────┐                      
+                                  │   History    │ → re-arm WPS PIN     
+                                  └──────────────┘                      
 ```
 
 ### Complete Signal Chain
 
-1. `Advertiser.advertising-started` → ConnectionHandler starts listening
-2. `ConnectionHandler.connection-received` → Receiver starts RTSP session
-3. `Receiver.stream-started` → UI transitions to receiving state
-4. `Receiver.stats-updated` → UI updates stats overlay
-5. `Receiver.stream-stopped` → History records session → returns to advertising
-6. `Receiver.stream-error` → History records partial session → returns to advertising
-7. `ConnectionHandler.connection-lost` → UI returns to idle state
+1. `Advertiser.advertising-started(group_iface)` → ConnectionHandler arms WPS PIN on group iface
+2. `ConnectionHandler.pin-display(pin)` → UI displays PIN for user
+3. Source enters PIN → `AP-STA-CONNECTED` on group interface
+4. `ConnectionHandler.connection-received` → Receiver starts RTSP session
+5. `Receiver.stream-started` → UI transitions to receiving state
+6. `Receiver.stats-updated` → UI updates stats overlay
+7. `Receiver.stream-stopped` → History records session → re-arm WPS PIN
+8. `ConnectionHandler.connection-lost` → re-arm WPS PIN for next connection
 
 ## Threading Model
 
 | Thread | Responsibility | Communication |
 |--------|---------------|---------------|
 | **Main (GTK)** | UI rendering, GObject signal dispatch, user interaction | — |
-| **P2P Monitor** | wpa_cli event polling via subprocess | `GLib.idle_add()` for signals |
+| **GO Event Monitor** | wpa_cli on GROUP interface, AP-STA-CONNECTED events | `GLib.idle_add()` for signals |
 | **RTSP Session** | TCP socket handling, RTSP message exchange | `GLib.idle_add()` for signals |
 | **Stats Monitor** | 1-second pipeline stat queries, stream loss detection | `GLib.idle_add()` for signals |
 | **GStreamer** | Internal decoding/rendering threads | Bus messages → main thread via `bus.add_watch()` |
@@ -183,6 +184,13 @@ Most laptop Wi-Fi adapters (Intel AX200/AX201/AX210, etc.) have a single radio t
 - But the **driver fails** to maintain both connections, causing an immediate disconnection
 - The `P2P-GROUP-FORMATION-SUCCESS` event fires, followed by `CTRL-EVENT-EAP-FAILURE`
 
-**Workaround:** Disconnect from the regular Wi-Fi network before accepting Miracast connections, use Ethernet for internet, or use a dedicated secondary USB Wi-Fi adapter for P2P.
+**Automatic solution:** When a secondary USB Wi-Fi adapter is detected (e.g., TP-Link AXE5400), the application automatically:
 
-This constraint is documented in the Getting Started guide's troubleshooting section.
+1. Unmanages the adapter from NetworkManager (`nmcli device set <iface> managed no`)
+2. Spawns a **dedicated wpa_supplicant** process on it (independent from the system instance)
+3. Uses the dedicated instance for all P2P operations (advertising, negotiation, group formation)
+4. On shutdown: kills the dedicated process and restores NM management
+
+This is handled by the `P2PSupplicantManager` class (`p2p_supplicant.py`).
+
+**Fallback:** Without a secondary adapter, the application uses the system wpa_supplicant on the primary adapter. This requires disconnecting from Wi-Fi for Miracast to work.

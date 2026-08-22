@@ -141,11 +141,15 @@ From your source device:
 
 ### What Happens
 
-1. The source device discovers your server via Wi-Fi Direct P2P
-2. A P2P connection is formed (WPS Push Button Configuration)
-3. RTSP negotiation establishes streaming parameters (resolution, codec, ports)
-4. The source begins streaming H.264 video (+ AAC audio) over RTP/MPEG-TS
-5. The video appears in the server window (auto-fullscreen if configured)
+1. The app starts a dedicated wpa_supplicant on the secondary Wi-Fi adapter
+2. A P2P Group Owner is created — making the server discoverable
+3. A WPS PIN is displayed on the screen
+4. You select "Ubuntu Miracast Server" on your phone's Wi-Fi Direct / Cast list
+5. Enter the PIN shown on the server screen
+6. The P2P connection forms (WPS exchange)
+7. RTSP negotiation establishes streaming parameters
+8. The source begins streaming H.264 video (+ AAC audio)
+9. Video appears in the server window
 
 ### Keyboard Shortcuts
 
@@ -167,7 +171,11 @@ From your source device:
 
 **Solutions (pick one):**
 
-1. **Disconnect from your Wi-Fi router before casting** (simplest):
+1. **Use a secondary USB Wi-Fi adapter** (recommended) — the app automatically detects a dedicated adapter and spawns a separate wpa_supplicant instance for it. Your built-in Wi-Fi stays connected to the internet. Known working adapters:
+   - TP-Link AXE5400 Archer TXE70UH (Realtek RTL8852CU, driver: `rtw89_8852cu`)
+   - Any adapter with P2P-client/P2P-GO support (`iw phy | grep P2P`)
+
+2. **Disconnect from your Wi-Fi router before casting**:
    ```bash
    # Disconnect from home WiFi
    nmcli device disconnect wlo1
@@ -179,11 +187,7 @@ From your source device:
    nmcli device connect wlo1
    ```
 
-2. **Use a secondary USB Wi-Fi adapter** dedicated to P2P — this eliminates the channel conflict entirely.
-
 3. **Use Ethernet** for internet connectivity instead of Wi-Fi, freeing the wireless adapter for P2P.
-
-4. **Run a dedicated wpa_supplicant instance** for P2P (advanced). This is the approach used by [miraclecast](https://github.com/albfan/miraclecast). See [Service Mode documentation](service-mode.md) for details.
 
 > **Note:** This is a hardware/driver limitation, not a software bug. The P2P protocol negotiation works correctly — the failure occurs at the driver level when attempting concurrent multi-channel operation.
 
