@@ -31,7 +31,7 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Upload changelog
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: changelog
           path: CHANGES.md
@@ -54,7 +54,7 @@ jobs:
         run: python -m build --sdist
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-dist
           path: dist/
@@ -80,7 +80,7 @@ jobs:
           mv ../*.deb deb-out/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: debian-package
           path: deb-out/*.deb
