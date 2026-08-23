@@ -1,15 +1,13 @@
 Source: ubuntu-miracast-server
 Section: video
 Priority: optional
-Maintainer: Ubuntu Miracast Team <example@example.com>
+Maintainer: Eddy Arrel <eddy.arrel@gmail.com>
 Build-Depends: debhelper-compat (= 13),
                dh-python,
                python3-all,
-               python3-setuptools,
-               python3-gi,
-               python3-gst-1.0
+               python3-setuptools
 Standards-Version: 4.6.0
-Homepage: https://github.com/yourusername/ubuntu-miracast-server
+Homepage: https://github.com/arongate/ubuntu-miracast-server
 Rules-Requires-Root: no
 X-Python3-Version: >= 3.10
 
@@ -25,7 +23,8 @@ Depends: ${python3:Depends},
          gir1.2-gst-plugins-base-1.0,
          gstreamer1.0-plugins-good,
          gstreamer1.0-plugins-bad,
-         wpasupplicant
+         wpasupplicant,
+         dnsmasq
 Recommends: gstreamer1.0-vaapi
 Description: Miracast server (sink) for Ubuntu
  Ubuntu Miracast Server is a desktop application that acts as a
