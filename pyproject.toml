@@ -74,6 +74,7 @@ targets = ["src/"]
 # Focus on high-impact issues for a privileged application
 skips = [
     "B101",  # assert used (fine in non-production code paths)
+    "B108",  # hardcoded /tmp paths (intentional for wpa_supplicant control socket)
     "B311",  # random not for crypto (we use it for WPS PINs which are displayed to user)
 ]
 

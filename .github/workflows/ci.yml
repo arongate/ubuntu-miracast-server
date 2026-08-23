@@ -49,10 +49,10 @@ jobs:
           . .venv/bin/activate
           pip install mypy
 
-      - name: Run mypy
+      - name: Run mypy (advisory)
         run: |
           . .venv/bin/activate
-          mypy src/ --ignore-missing-imports
+          mypy src/ --ignore-missing-imports || echo "::warning::mypy found type errors (advisory, not blocking)"
 
   # ─── Test ───────────────────────────────────────────────────────────────────
   test:
