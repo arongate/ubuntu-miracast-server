@@ -2,9 +2,9 @@
 
 ## Python Style
 
-- **Formatter:** Black, line-length=100
-- **Imports:** isort with Black-compatible profile
-- **Linting:** flake8
+- **Linting & Formatting:** Ruff (replaces Black, isort, flake8)
+- **Config:** `pyproject.toml` → `[tool.ruff]`
+- **Line length:** 100
 - **Type hints:** Required on all function signatures. Use `str | None` union syntax (3.10+)
 - **Docstrings:** Google-style, required on all public classes and methods
 

@@ -19,7 +19,7 @@ Components communicate via GObject signals. The flow is:
 1. `Advertiser` → advertising-started(group_iface) → `ConnectionHandler` arms WPS PIN
 2. `ConnectionHandler` → pin-display(pin) → UI shows PIN on screen
 3. Source enters PIN → AP-STA-CONNECTED on group interface
-4. `ConnectionHandler` → connection-received → `Receiver` starts RTSP
+4. `ConnectionHandler` → connection-received → `Receiver` connects to source RTSP
 5. `Receiver` → stream-started/stopped/error → `History` records + UI updates
 6. After stream ends → ConnectionHandler re-arms WPS PIN
 
@@ -64,9 +64,8 @@ ui/settings_view.py → (uses config via constructor injection)
 | System Binary | Used By | Purpose |
 |---|---|---|
 | `wpa_cli` | advertiser, connection | Wi-Fi Direct P2P control |
-| `dhclient` | connection | DHCP client after P2P group formation |
-| `dnsmasq` | connection | DHCP server when acting as P2P GO |
-| `ip` | connection | Interface IP address queries |
+| `dnsmasq` | connection | DHCP server for P2P group clients |
+| `ip` | connection | Interface IP address management |
 | `systemctl` | service | systemd service management |
 
 ## File Locations (XDG)

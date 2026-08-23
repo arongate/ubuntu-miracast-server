@@ -13,15 +13,17 @@ The industry-standard approach for a Miracast sink is **Autonomous Group Owner**
 ```bash
 # 1. Setup
 wpa_cli -p <ctrl> -i <iface> set wifi_display 1
-wpa_cli -p <ctrl> -i <iface> wfd_subelem_set 0 000600511C44012C
+wpa_cli -p <ctrl> -i <iface> wfd_subelem_set 0 000600111C44012C
 wpa_cli -p <ctrl> -i <iface> wfd_subelem_set 1 0006000000000000
 wpa_cli -p <ctrl> -i <iface> wfd_subelem_set 6 000700000000000000
 wpa_cli -p <ctrl> -i <iface> set device_name "My Sink"
 wpa_cli -p <ctrl> -i <iface> set device_type 7-0050F204-1
+wpa_cli -p <ctrl> -i <iface> set p2p_go_ht40 1
+wpa_cli -p <ctrl> -i <iface> p2p_find type=progressive
 
 # 2. Create autonomous P2P Group Owner
 wpa_cli -p <ctrl> -i <iface> p2p_group_add persistent
-# → Creates group interface (e.g., p2p-wlx...-0)
+# → Creates group interface (e.g., p2p-0)
 # → Emits P2P-GROUP-STARTED <group_iface> GO
 
 # 3. On the GROUP interface (not p2p-dev!):
@@ -34,8 +36,10 @@ wpa_cli -p <ctrl> -i <group_iface> wps_pin any <PIN>
 
 # 5. After connection:
 # - Run DHCP server (dnsmasq) on group_iface
-# - Assign static IP (192.168.49.1/24) and run DHCP for clients
-# - Start RTSP server on our IP
+# - Assign static IP (192.168.173.1/24) and run DHCP for clients
+# - Wait for peer to get DHCP lease (poll dnsmasq leases / ARP table)
+# - Connect TO source's RTSP server at <peer_ip>:7236 (sink is RTSP CLIENT)
+# - Perform RTSP M1-M7 negotiation, then receive RTP stream on UDP port 1028
 ```
 
 ## Key Events to Monitor (on GROUP interface after p2p_group_add)
@@ -57,8 +61,8 @@ wpa_cli -p <ctrl> -i <group_iface> wps_pin any <PIN>
 
 ## WFD Subelement Details
 
-- ID=0 (Device Info): `0006 0051 1C44 012C`
-  - 0051 = Primary Sink (01) + Session Available (10) + WSD (40)
+- ID=0 (Device Info): `0006 0011 1C44 012C`
+  - 0011 = Primary Sink (01) + Session Available (10)
   - 1C44 = Port 7236
   - 012C = 300 Mbps throughput
 - ID=1 (Associated BSSID): `0006 000000000000` (none)
@@ -93,6 +97,26 @@ This fails because:
 4. Events lost due to wpa_cli buffering issues
 
 Fix: Switch to Autonomous GO mode with `p2p_group_add` + `wps_pin any`.
+
+## RTSP Direction (CRITICAL)
+
+In Wi-Fi Display, the **Sink is the RTSP CLIENT** and the **Source is the RTSP SERVER**.
+After P2P connection + DHCP, the SINK connects TO the SOURCE's port 7236.
+
+```
+Source (phone)                  Sink (us)
+  RTSP server :7236  ←────────  RTSP client connects
+  M1: OPTIONS →                  ← 200 OK
+       ← M2: OPTIONS             → 200 OK
+  M3: GET_PARAMETER →            ← 200 OK + capabilities
+  M4: SET_PARAMETER →            ← 200 OK
+  M5: SET_PARAMETER (trigger) → ← 200 OK
+       ← M6: SETUP               → 200 OK + Session
+       ← M7: PLAY                → 200 OK
+  ──── RTP stream (UDP) ────→    receives on port 1028
+```
+
+DO NOT implement a listening RTSP server on the sink side. The sink CONNECTS to the source.
 
 ## Sources
 
