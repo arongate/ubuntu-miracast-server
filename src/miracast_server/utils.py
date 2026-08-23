@@ -89,11 +89,10 @@ def list_p2p_interfaces() -> list[dict[str, str]]:
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
                 line = line.strip()
-                if line.startswith("p2p-dev-"):
-                    if line not in seen:
-                        seen.add(line)
-                        parent = line.replace("p2p-dev-", "")
-                        interfaces.append(_get_interface_info(line, parent))
+                if line.startswith("p2p-dev-") and line not in seen:
+                    seen.add(line)
+                    parent = line.replace("p2p-dev-", "")
+                    interfaces.append(_get_interface_info(line, parent))
     except (subprocess.TimeoutExpired, OSError) as e:
         logger.debug("wpa_cli interface query failed: %s", e)
 
@@ -324,13 +323,13 @@ def _find_p2p_interface() -> tuple[str | None, str | None]:
     except OSError as e:
         logger.error(f"Failed to execute wpa_cli: {e}")
         raise RuntimeError(
-            f"Failed to execute wpa_cli: {e}. "
-            "Ensure wpa_supplicant is installed and accessible."
+            f"Failed to execute wpa_cli: {e}. Ensure wpa_supplicant is installed and accessible."
         ) from e
 
 
-def _run_wpa_cli(interface: str, *args: str, skip_last_validation: bool = False,
-                 ctrl_path: str | None = None) -> str:
+def _run_wpa_cli(
+    interface: str, *args: str, skip_last_validation: bool = False, ctrl_path: str | None = None
+) -> str:
     """Run a wpa_cli command with parameter validation.
 
     All parameters are validated against an allowlist (alphanumeric, colons,

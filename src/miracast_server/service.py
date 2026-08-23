@@ -5,7 +5,6 @@ and headless (service) mode operation.
 """
 
 import logging
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -20,7 +19,6 @@ from miracast_server.advertiser import MiracastAdvertiser
 from miracast_server.config import ServerConfig
 from miracast_server.connection import ConnectionHandler
 from miracast_server.history import ServerSessionHistory
-from miracast_server.models import SourceInfo
 from miracast_server.receiver import MiracastReceiver
 
 logger = logging.getLogger(__name__)
@@ -163,9 +161,7 @@ class ServerServiceManager:
                 timeout=10,
             )
             if result.returncode != 0:
-                raise RuntimeError(
-                    f"systemctl enable failed: {result.stderr.strip()}"
-                )
+                raise RuntimeError(f"systemctl enable failed: {result.stderr.strip()}")
         except subprocess.TimeoutExpired as e:
             raise RuntimeError("Timeout enabling service") from e
         except OSError as e:
@@ -187,9 +183,7 @@ class ServerServiceManager:
                 timeout=10,
             )
             if result.returncode != 0:
-                raise RuntimeError(
-                    f"systemctl disable failed: {result.stderr.strip()}"
-                )
+                raise RuntimeError(f"systemctl disable failed: {result.stderr.strip()}")
         except subprocess.TimeoutExpired as e:
             raise RuntimeError("Timeout disabling service") from e
         except OSError as e:
@@ -214,9 +208,7 @@ class ServerServiceManager:
                 timeout=15,
             )
             if result.returncode != 0:
-                raise RuntimeError(
-                    f"systemctl start failed: {result.stderr.strip()}"
-                )
+                raise RuntimeError(f"systemctl start failed: {result.stderr.strip()}")
         except subprocess.TimeoutExpired as e:
             raise RuntimeError("Timeout starting service") from e
         except OSError as e:
@@ -238,9 +230,7 @@ class ServerServiceManager:
                 timeout=15,
             )
             if result.returncode != 0:
-                raise RuntimeError(
-                    f"systemctl stop failed: {result.stderr.strip()}"
-                )
+                raise RuntimeError(f"systemctl stop failed: {result.stderr.strip()}")
         except subprocess.TimeoutExpired as e:
             raise RuntimeError("Timeout stopping service") from e
         except OSError as e:
@@ -262,9 +252,7 @@ class ServerServiceManager:
                 timeout=10,
             )
             if result.returncode != 0:
-                raise RuntimeError(
-                    f"daemon-reload failed: {result.stderr.strip()}"
-                )
+                raise RuntimeError(f"daemon-reload failed: {result.stderr.strip()}")
         except subprocess.TimeoutExpired as e:
             raise RuntimeError("Timeout during daemon-reload") from e
         except OSError as e:
@@ -301,7 +289,12 @@ def run_as_service(device_name: str | None = None, p2p_interface: str | None = N
     # Determine P2P interface: CLI flag > config > auto-detect
     iface = p2p_interface or config.get("network", "p2p_interface", "") or None
 
-    logger.info("Starting service mode as '%s' (RTSP port %d, interface=%s)", name, rtsp_port, iface or "auto")
+    logger.info(
+        "Starting service mode as '%s' (RTSP port %d, interface=%s)",
+        name,
+        rtsp_port,
+        iface or "auto",
+    )
 
     advertiser = MiracastAdvertiser(device_name=name, rtsp_port=rtsp_port, p2p_interface=iface)
     receiver = MiracastReceiver(

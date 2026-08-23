@@ -4,12 +4,9 @@ import json
 import os
 import stat
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from miracast_server.history import ServerSessionHistory, _MAX_RECORDS
+from miracast_server.history import _MAX_RECORDS, ServerSessionHistory
 from miracast_server.models import ReceiverStats, ServerSessionRecord, SourceInfo
 
 
@@ -46,7 +43,7 @@ class TestServerSessionHistoryInit:
 
     def test_creates_parent_directories(self, tmp_path):
         history_file = tmp_path / "subdir" / "nested" / "history.json"
-        hist = ServerSessionHistory(history_path=str(history_file))
+        ServerSessionHistory(history_path=str(history_file))
 
         assert history_file.parent.exists()
 
@@ -360,7 +357,7 @@ class TestServerSessionHistoryDiskWriteFailure:
         hist = ServerSessionHistory(history_path=str(history_file))
 
         with patch.object(hist, "_write_history", side_effect=OSError("Disk full")):
-            record = hist.add_session(_make_source_info(), _make_stats())
+            hist.add_session(_make_source_info(), _make_stats())
 
         # Record should still be in memory
         sessions = hist.get_sessions()

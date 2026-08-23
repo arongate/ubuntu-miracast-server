@@ -1,11 +1,11 @@
 """Tests for P2PSupplicantManager — dedicated wpa_supplicant lifecycle."""
 
-from unittest.mock import MagicMock, patch, call
-from pathlib import Path
 import os
+from unittest.mock import MagicMock, patch
+
 import pytest
 
-from miracast_server.p2p_supplicant import P2PSupplicantManager, _WPA_CONF_TEMPLATE
+from miracast_server.p2p_supplicant import _WPA_CONF_TEMPLATE, P2PSupplicantManager
 
 
 class TestP2PSupplicantManagerInit:
@@ -27,9 +27,7 @@ class TestP2PSupplicantManagerConfig:
 
     def test_config_template_has_required_fields(self):
         """Config must include ctrl_interface, device_name, P2P settings."""
-        config = _WPA_CONF_TEMPLATE.format(
-            ctrl_dir="/tmp/test", device_name="Test"
-        )
+        config = _WPA_CONF_TEMPLATE.format(ctrl_dir="/tmp/test", device_name="Test")
         assert "ctrl_interface=/tmp/test" in config
         assert "device_name=Test" in config
         assert "device_type=7-0050F204-1" in config
@@ -44,7 +42,8 @@ class TestP2PSupplicantManagerConfig:
         mgr._write_config()
 
         assert os.path.exists(mgr._conf_path)
-        content = open(mgr._conf_path).read()
+        with open(mgr._conf_path) as f:
+            content = f.read()
         assert "device_name=Test" in content
         assert "ctrl_interface=" in content
 
@@ -152,7 +151,6 @@ class TestP2PSupplicantManagerLifecycle:
 
         # Should have tried to restore NM
         nm_restore_calls = [
-            c for c in mock_run.call_args_list
-            if "nmcli" in str(c) and "yes" in str(c)
+            c for c in mock_run.call_args_list if "nmcli" in str(c) and "yes" in str(c)
         ]
         assert len(nm_restore_calls) >= 1

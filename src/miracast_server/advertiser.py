@@ -13,7 +13,6 @@ Architecture:
 """
 
 import logging
-import re
 import subprocess
 import threading
 import time
@@ -116,6 +115,7 @@ class MiracastAdvertiser(GObject.Object):
             # Step 1: Resolve interface
             if not self._p2p_interface:
                 from miracast_server.utils import _find_p2p_interface
+
                 p2p_iface, _ = _find_p2p_interface()
                 self._p2p_interface = p2p_iface
 
@@ -153,7 +153,12 @@ class MiracastAdvertiser(GObject.Object):
             # Step 5: Set WFD subelements on the group interface too
             try:
                 self._wpa("set", "wifi_display", "1", interface=group_iface)
-                self._wpa("wfd_subelem_set", "0", _encode_wfd_device_info(self._rtsp_port), interface=group_iface)
+                self._wpa(
+                    "wfd_subelem_set",
+                    "0",
+                    _encode_wfd_device_info(self._rtsp_port),
+                    interface=group_iface,
+                )
             except RuntimeError as e:
                 logger.debug("Could not set WFD on group iface (may not be needed): %s", e)
 
@@ -163,7 +168,9 @@ class MiracastAdvertiser(GObject.Object):
             GLib.idle_add(self.emit, "advertising-started", group_iface)
             logger.info(
                 "Advertising as '%s' via GO on %s (RTSP port %d)",
-                self._device_name, group_iface, self._rtsp_port,
+                self._device_name,
+                group_iface,
+                self._rtsp_port,
             )
 
         except (RuntimeError, ValueError) as e:

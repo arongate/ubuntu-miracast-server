@@ -69,9 +69,7 @@ class ServerConfig:
         if config_path:
             self.config_path = Path(config_path)
         else:
-            self.config_path = (
-                Path.home() / ".config" / "ubuntu-miracast-server" / "config.json"
-            )
+            self.config_path = Path.home() / ".config" / "ubuntu-miracast-server" / "config.json"
 
         # Create directory if it doesn't exist
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,7 +85,7 @@ class ServerConfig:
         """
         if self.config_path.exists():
             try:
-                with open(self.config_path, "r") as f:
+                with open(self.config_path) as f:
                     data = json.load(f)
                 if not isinstance(data, dict):
                     logger.warning(
@@ -184,13 +182,9 @@ class ServerConfig:
         min_val = rule.get("min")
         max_val = rule.get("max")
         if min_val is not None and value < min_val:
-            raise ValueError(
-                f"{section}.{key} must be >= {min_val}, got {value}"
-            )
+            raise ValueError(f"{section}.{key} must be >= {min_val}, got {value}")
         if max_val is not None and value > max_val:
-            raise ValueError(
-                f"{section}.{key} must be <= {max_val}, got {value}"
-            )
+            raise ValueError(f"{section}.{key} must be <= {max_val}, got {value}")
 
     def get(self, section: str, key: str, default: Any = None) -> Any:
         """Get a configuration value.
@@ -236,9 +230,7 @@ class ServerConfig:
         try:
             self._write_config(self.config)
         except OSError as e:
-            logger.error(
-                "Failed to persist config after setting %s.%s: %s", section, key, e
-            )
+            logger.error("Failed to persist config after setting %s.%s: %s", section, key, e)
 
     def save(self, config: dict | None = None) -> None:
         """Save configuration to file.

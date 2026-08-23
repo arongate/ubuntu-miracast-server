@@ -3,11 +3,11 @@
 import json
 import os
 import stat
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 
-from miracast_server.config import ServerConfig, _DEFAULT_CONFIG
+import pytest
+
+from miracast_server.config import ServerConfig
 
 
 class TestServerConfigDefaults:
@@ -15,7 +15,7 @@ class TestServerConfigDefaults:
 
     def test_creates_default_config_when_no_file_exists(self, tmp_path):
         config_file = tmp_path / "config.json"
-        cfg = ServerConfig(config_path=str(config_file))
+        ServerConfig(config_path=str(config_file))
 
         assert config_file.exists()
         with open(config_file) as f:
@@ -53,7 +53,7 @@ class TestServerConfigDefaults:
 
     def test_creates_parent_directories(self, tmp_path):
         config_file = tmp_path / "subdir" / "nested" / "config.json"
-        cfg = ServerConfig(config_path=str(config_file))
+        ServerConfig(config_path=str(config_file))
 
         assert config_file.exists()
 
@@ -63,7 +63,7 @@ class TestServerConfigFilePermissions:
 
     def test_default_config_has_0600_permissions(self, tmp_path):
         config_file = tmp_path / "config.json"
-        cfg = ServerConfig(config_path=str(config_file))
+        ServerConfig(config_path=str(config_file))
 
         file_stat = os.stat(config_file)
         mode = stat.S_IMODE(file_stat.st_mode)

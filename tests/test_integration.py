@@ -14,14 +14,17 @@ boundary. The test verifies that the correct commands are issued in the correct
 order with the correct parameters.
 """
 
-from unittest.mock import MagicMock, patch, call
 from datetime import datetime
-import pytest
+from unittest.mock import MagicMock, patch
 
 from miracast_server.advertiser import MiracastAdvertiser
 from miracast_server.connection import ConnectionHandler
-from miracast_server.p2p_supplicant import P2PSupplicantManager
-from miracast_server.rtsp import parse_rtsp_request, build_response, build_capability_response_body, RTSP_OK
+from miracast_server.rtsp import (
+    RTSP_OK,
+    build_capability_response_body,
+    build_response,
+    parse_rtsp_request,
+)
 
 
 class TestEndToEndGOCreation:
@@ -129,6 +132,7 @@ class TestEndToEndRTSPNegotiation:
         req = parse_rtsp_request(data)
 
         from miracast_server.rtsp import build_options_response
+
         resp = build_options_response(req.cseq)
         serialized = resp.serialize().decode()
 
@@ -164,6 +168,7 @@ class TestEndToEndRTSPNegotiation:
         req = parse_rtsp_request(data)
 
         from miracast_server.rtsp import parse_wfd_parameters
+
         params = parse_wfd_parameters(req.body)
 
         assert params.video_codec == "H264"
@@ -173,7 +178,8 @@ class TestEndToEndRTSPNegotiation:
     def test_m5_setup_response(self):
         """M5: Verify SETUP response includes session ID and transport."""
         resp = build_response(
-            RTSP_OK, cseq=4,
+            RTSP_OK,
+            cseq=4,
             headers={
                 "Transport": "RTP/AVP/UDP;unicast;client_port=1028",
                 "Session": "DEADBEEF;timeout=30",
@@ -202,6 +208,7 @@ class TestEndToEndDisconnectAndRearm:
 
         # Set up active connection
         from miracast_server.models import IncomingConnection
+
         handler._active_connection = IncomingConnection(
             peer_address="be:10:7b:d4:5f:b8",
             peer_ip="192.168.49.10",
@@ -244,9 +251,7 @@ class TestEndToEndShutdown:
         mock_wpa.return_value = "OK"
         mock_wait.return_value = "p2p-wlx123-0"
 
-        advertiser = MiracastAdvertiser(
-            p2p_interface="wlx123", ctrl_path="/tmp/ctrl"
-        )
+        advertiser = MiracastAdvertiser(p2p_interface="wlx123", ctrl_path="/tmp/ctrl")
         advertiser.start_advertising()
 
         # Now stop

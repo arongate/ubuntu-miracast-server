@@ -7,9 +7,7 @@ enabling simultaneous internet (on the primary adapter) and Miracast P2P
 
 import logging
 import os
-import signal
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
@@ -103,7 +101,8 @@ class P2PSupplicantManager:
         try:
             subprocess.run(
                 ["sudo", "pkill", "-f", f"wpa_supplicant.*-i.*{self._interface}"],
-                capture_output=True, timeout=5,
+                capture_output=True,
+                timeout=5,
             )
             time.sleep(0.5)
         except (subprocess.TimeoutExpired, OSError):
@@ -122,11 +121,16 @@ class P2PSupplicantManager:
         try:
             self._process = subprocess.Popen(
                 [
-                    "sudo", "wpa_supplicant",
-                    "-i", self._interface,
-                    "-c", self._conf_path,
-                    "-D", "nl80211",
-                    "-f", self._log_path,
+                    "sudo",
+                    "wpa_supplicant",
+                    "-i",
+                    self._interface,
+                    "-c",
+                    self._conf_path,
+                    "-D",
+                    "nl80211",
+                    "-f",
+                    self._log_path,
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -204,11 +208,7 @@ class P2PSupplicantManager:
         Raises:
             RuntimeError: If the command fails.
         """
-        cmd = [
-            "sudo", "wpa_cli",
-            "-p", self._ctrl_dir,
-            "-i", self._interface,
-        ] + list(args)
+        cmd = ["sudo", "wpa_cli", "-p", self._ctrl_dir, "-i", self._interface, *list(args)]
 
         try:
             result = subprocess.run(
@@ -239,7 +239,9 @@ class P2PSupplicantManager:
                 self._was_nm_managed = True
                 logger.debug("Unmanaged %s from NetworkManager", self._interface)
             else:
-                logger.debug("nmcli unmanage returned %d: %s", result.returncode, result.stderr.strip())
+                logger.debug(
+                    "nmcli unmanage returned %d: %s", result.returncode, result.stderr.strip()
+                )
         except (subprocess.TimeoutExpired, OSError) as e:
             logger.debug("Could not unmanage from NM: %s", e)
 
@@ -272,18 +274,21 @@ class P2PSupplicantManager:
                 except PermissionError:
                     subprocess.run(
                         ["sudo", "rm", "-f", self._conf_path],
-                        capture_output=True, timeout=5,
+                        capture_output=True,
+                        timeout=5,
                     )
 
             # Also clean stale control socket directory
             if os.path.exists(self._ctrl_dir):
                 try:
                     import shutil
+
                     shutil.rmtree(self._ctrl_dir, ignore_errors=True)
                 except Exception:
                     subprocess.run(
                         ["sudo", "rm", "-rf", self._ctrl_dir],
-                        capture_output=True, timeout=5,
+                        capture_output=True,
+                        timeout=5,
                     )
 
             Path(self._conf_path).write_text(config_content)
@@ -301,9 +306,7 @@ class P2PSupplicantManager:
                 return True
             # Also check if process died
             if self._process and self._process.poll() is not None:
-                logger.error(
-                    "wpa_supplicant exited with code %d", self._process.returncode
-                )
+                logger.error("wpa_supplicant exited with code %d", self._process.returncode)
                 return False
             time.sleep(0.2)
         return False

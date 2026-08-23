@@ -1,13 +1,10 @@
 """Tests for MiracastAdvertiser — Autonomous GO mode."""
 
-from unittest.mock import MagicMock, patch, call
-import pytest
+from unittest.mock import patch
 
 from miracast_server.advertiser import (
     MiracastAdvertiser,
     _encode_wfd_device_info,
-    _WFD_ASSOCIATED_BSSID_SUBELEMENT,
-    _WFD_COUPLED_SINK_SUBELEMENT,
 )
 
 
@@ -78,7 +75,7 @@ class TestMiracastAdvertiserStartStop:
 
         # Verify WFD commands were issued in correct order
         calls = mock_wpa.call_args_list
-        cmds = [(c[0][1] if len(c[0]) > 1 else c[0][0]) for c in calls]
+        [(c[0][1] if len(c[0]) > 1 else c[0][0]) for c in calls]
 
         # Must set wifi_display, subelements, device_name, device_type, then p2p_group_add
         assert any("wifi_display" in str(c) for c in calls)
@@ -111,7 +108,9 @@ class TestMiracastAdvertiserStartStop:
 
         adv = MiracastAdvertiser(p2p_interface="wlx123", ctrl_path="/tmp/ctrl")
         errors = []
-        with patch("miracast_server.advertiser.GLib.idle_add", side_effect=lambda *a: errors.append(a)):
+        with patch(
+            "miracast_server.advertiser.GLib.idle_add", side_effect=lambda *a: errors.append(a)
+        ):
             adv.start_advertising()
 
         assert adv.is_advertising is False
@@ -160,7 +159,9 @@ class TestMiracastAdvertiserStartStop:
 
         adv = MiracastAdvertiser(p2p_interface="wlx123", ctrl_path="/tmp/ctrl")
         errors = []
-        with patch("miracast_server.advertiser.GLib.idle_add", side_effect=lambda *a: errors.append(a)):
+        with patch(
+            "miracast_server.advertiser.GLib.idle_add", side_effect=lambda *a: errors.append(a)
+        ):
             adv.start_advertising()
 
         assert adv.is_advertising is False

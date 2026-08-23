@@ -28,8 +28,16 @@ ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # do not perform function calls in argument defaults
     "SIM108", # use ternary operator (readability preference)
+    "SIM105", # use contextlib.suppress (try/except/pass is clearer in our network code)
     "UP007",  # use X | Y for union types (need runtime support)
+    "RUF012", # mutable class variable (GObject __gsignals__ requires this pattern)
+    "N806",   # variable in function should be lowercase (constants defined in functions)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# gi.require_version() must be called before importing from gi.repository
+"src/miracast_server/*.py" = ["E402"]
+"tests/*.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["miracast_server"]

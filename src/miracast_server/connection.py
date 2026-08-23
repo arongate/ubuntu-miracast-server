@@ -125,7 +125,8 @@ class ConnectionHandler(GObject.Object):
         self._thread.start()
         logger.info(
             "Listening on %s with PIN %s",
-            self._group_interface, self._current_pin,
+            self._group_interface,
+            self._current_pin,
         )
 
     def stop_listening(self) -> None:
@@ -162,12 +163,19 @@ class ConnectionHandler(GObject.Object):
         for attempt in range(10):
             try:
                 result = _run_wpa_cli(
-                    self._group_interface, "wps_pin", "any", self._current_pin,
+                    self._group_interface,
+                    "wps_pin",
+                    "any",
+                    self._current_pin,
                     ctrl_path=self._ctrl_path,
                 )
                 if "FAIL" not in result:
-                    logger.info("WPS PIN armed: %s on %s (attempt %d)",
-                                self._current_pin, self._group_interface, attempt + 1)
+                    logger.info(
+                        "WPS PIN armed: %s on %s (attempt %d)",
+                        self._current_pin,
+                        self._group_interface,
+                        attempt + 1,
+                    )
                     return
                 else:
                     logger.debug("wps_pin attempt %d failed, retrying...", attempt + 1)
@@ -177,7 +185,9 @@ class ConnectionHandler(GObject.Object):
             time.sleep(1)
 
         logger.error("Failed to arm WPS PIN after 10 attempts")
-        GLib.idle_add(self.emit, "connection-error", "Failed to arm WPS PIN — group interface not ready")
+        GLib.idle_add(
+            self.emit, "connection-error", "Failed to arm WPS PIN — group interface not ready"
+        )
 
     def _event_monitor_loop(self) -> None:
         """Monitor the GROUP interface for AP-STA-CONNECTED events."""
@@ -222,7 +232,9 @@ class ConnectionHandler(GObject.Object):
             # Drain ATTACH response
             self._drain_output(proc, timeout=1.0)
 
-            logger.info("Event monitor attached to %s — waiting for connections", self._group_interface)
+            logger.info(
+                "Event monitor attached to %s — waiting for connections", self._group_interface
+            )
 
             # Main event loop — re-arm WPS every 90 seconds (registrar timeout is ~120s)
             last_rearm = time.monotonic()
@@ -308,7 +320,7 @@ class ConnectionHandler(GObject.Object):
 
         # DHCP is already running (started in start_listening)
         # Use our pre-configured IP
-        our_ip = self._our_ip if hasattr(self, '_our_ip') else "192.168.173.1"
+        our_ip = self._our_ip if hasattr(self, "_our_ip") else "192.168.173.1"
 
         # Wait for DHCP to complete — the phone needs to get an IP before we
         # can connect to its RTSP server. Poll dnsmasq leases for up to 15s.
@@ -367,7 +379,9 @@ class ConnectionHandler(GObject.Object):
             try:
                 result = subprocess.run(
                     ["ip", "neigh", "show", "dev", self._group_interface],
-                    capture_output=True, text=True, timeout=3,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
                 )
                 for line in result.stdout.strip().split("\n"):
                     if mac_lower in line.lower():
@@ -406,36 +420,41 @@ class ConnectionHandler(GObject.Object):
             # Kill any stale dnsmasq on this interface from previous runs
             subprocess.run(
                 ["sudo", "pkill", "-f", f"dnsmasq.*{iface}"],
-                capture_output=True, timeout=5,
+                capture_output=True,
+                timeout=5,
             )
             time.sleep(0.3)
 
             # Assign static IP
             subprocess.run(
                 ["sudo", "ip", "addr", "flush", "dev", iface],
-                capture_output=True, timeout=5,
+                capture_output=True,
+                timeout=5,
             )
             subprocess.run(
                 ["sudo", "ip", "addr", "add", f"{our_ip}/24", "dev", iface],
-                capture_output=True, timeout=5,
+                capture_output=True,
+                timeout=5,
             )
             subprocess.run(
                 ["sudo", "ip", "link", "set", iface, "up"],
-                capture_output=True, timeout=5,
+                capture_output=True,
+                timeout=5,
             )
 
             # Start dnsmasq for DHCP with router option
             subprocess.Popen(
                 [
-                    "sudo", "dnsmasq",
+                    "sudo",
+                    "dnsmasq",
                     f"--interface={iface}",
                     "--bind-interfaces",
-                    f"--dhcp-range=192.168.173.80,192.168.173.90,255.255.255.0,5m",
+                    "--dhcp-range=192.168.173.80,192.168.173.90,255.255.255.0,5m",
                     f"--dhcp-option=3,{our_ip}",  # Router/gateway
                     f"--dhcp-option=6,{our_ip}",  # DNS (us, even though we don't resolve)
                     "--no-daemon",
                     "--log-facility=-",
-                    f"--except-interface=lo",
+                    "--except-interface=lo",
                     "--no-resolv",
                     "--no-hosts",
                 ],

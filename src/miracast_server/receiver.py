@@ -15,13 +15,10 @@ RTSP Message Flow (from lazycast/Wi-Fi Display spec):
 """
 
 import errno
-import fcntl
 import logging
-import os
 import socket
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime
 
 import gi
@@ -70,17 +67,13 @@ def _validate_port(port: int) -> None:
 def _validate_video_codec(codec: str) -> None:
     """Validate video codec against whitelist."""
     if codec not in _ALLOWED_VIDEO_CODECS:
-        raise ValueError(
-            f"Video codec '{codec}' not in whitelist: {_ALLOWED_VIDEO_CODECS}"
-        )
+        raise ValueError(f"Video codec '{codec}' not in whitelist: {_ALLOWED_VIDEO_CODECS}")
 
 
 def _validate_audio_codec(codec: str) -> None:
     """Validate audio codec against whitelist."""
     if codec not in _ALLOWED_AUDIO_CODECS:
-        raise ValueError(
-            f"Audio codec '{codec}' not in whitelist: {_ALLOWED_AUDIO_CODECS}"
-        )
+        raise ValueError(f"Audio codec '{codec}' not in whitelist: {_ALLOWED_AUDIO_CODECS}")
 
 
 class PipelineBuilder:
@@ -166,8 +159,16 @@ class PipelineBuilder:
         videosink = self._make_video_sink()
 
         # Add all video elements to pipeline
-        for elem in [udpsrc, rtpdepay, tsdemux, video_queue, h264parse,
-                     decoder, videoconvert, videosink]:
+        for elem in [
+            udpsrc,
+            rtpdepay,
+            tsdemux,
+            video_queue,
+            h264parse,
+            decoder,
+            videoconvert,
+            videosink,
+        ]:
             pipeline.add(elem)
 
         # Link source chain
@@ -393,7 +394,8 @@ class MiracastReceiver(GObject.Object):
 
         logger.info(
             "Starting RTSP client session — connecting to source %s:%d",
-            self._source_ip, self._rtsp_port,
+            self._source_ip,
+            self._rtsp_port,
         )
 
         # Start RTSP client thread
@@ -416,7 +418,7 @@ class MiracastReceiver(GObject.Object):
         if self._rtsp_socket and self._session_id:
             try:
                 self._send_teardown()
-            except (OSError, socket.error):
+            except OSError:
                 pass
 
         # Stop pipeline
@@ -506,10 +508,7 @@ class MiracastReceiver(GObject.Object):
             # === M2: We send OPTIONS to source ===
             self._cseq += 1
             m2_request = (
-                f"OPTIONS * RTSP/1.0\r\n"
-                f"CSeq: {self._cseq}\r\n"
-                f"Require: org.wfa.wfd1.0\r\n"
-                f"\r\n"
+                f"OPTIONS * RTSP/1.0\r\nCSeq: {self._cseq}\r\nRequire: org.wfa.wfd1.0\r\n\r\n"
             )
             sock.sendall(m2_request.encode())
             logger.debug("M2 sent (OPTIONS to source)")
@@ -610,7 +609,7 @@ class MiracastReceiver(GObject.Object):
             # === Streaming phase: handle keep-alive and teardown ===
             self._streaming_loop(sock)
 
-        except socket.timeout:
+        except TimeoutError:
             if self._running:
                 error_msg = "RTSP connection timeout"
                 logger.error(error_msg)
@@ -659,13 +658,16 @@ class MiracastReceiver(GObject.Object):
                 sock.settimeout(_RTSP_RECV_TIMEOUT)
                 logger.info(
                     "Connected to source RTSP server %s:%d (attempt %d)",
-                    self._source_ip, self._rtsp_port, attempt,
+                    self._source_ip,
+                    self._rtsp_port,
+                    attempt,
                 )
                 return sock
-            except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            except (TimeoutError, ConnectionRefusedError, OSError) as e:
                 logger.debug(
                     "RTSP connect attempt %d failed: %s — retrying in 1s",
-                    attempt, e,
+                    attempt,
+                    e,
                 )
                 try:
                     sock.close()
@@ -729,7 +731,7 @@ class MiracastReceiver(GObject.Object):
                     if "wfd_video_formats" in data:
                         logger.info("Source sent updated video formats")
 
-            except socket.error as e:
+            except OSError as e:
                 err = e.args[0]
                 if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
                     # No data available, sleep briefly
@@ -769,16 +771,14 @@ class MiracastReceiver(GObject.Object):
                     body_start = header_end + 4
                     body_received = len(data) - body_start
                     while body_received < content_length:
-                        more = sock.recv(
-                            min(content_length - body_received, _RTSP_BUFFER_SIZE)
-                        )
+                        more = sock.recv(min(content_length - body_received, _RTSP_BUFFER_SIZE))
                         if not more:
                             break
                         data += more
                         body_received += len(more)
 
             return data.decode("utf-8", errors="replace")
-        except socket.timeout:
+        except TimeoutError:
             return None
         except OSError:
             return None
@@ -819,9 +819,7 @@ class MiracastReceiver(GObject.Object):
         Replies to the source's GET_PARAMETER query with our supported
         WFD parameters (matching lazycast's proven working values).
         """
-        msg = "wfd_client_rtp_ports: RTP/AVP/UDP;unicast {} 0 mode=play\r\n".format(
-            self._rtp_port
-        )
+        msg = f"wfd_client_rtp_ports: RTP/AVP/UDP;unicast {self._rtp_port} 0 mode=play\r\n"
         msg += "wfd_audio_codecs: AAC 00000001 00\r\n"
         # Video formats: support most resolutions up to 1080p
         # Bit 0x0001FEFF = disable 1080p60 (bit 16), keep rest
@@ -974,7 +972,7 @@ class MiracastReceiver(GObject.Object):
 
         elif msg_type == Gst.MessageType.STATE_CHANGED:
             if message.src == self._pipeline:
-                old, new, pending = message.parse_state_changed()
+                old, new, _pending = message.parse_state_changed()
                 logger.debug("Pipeline state: %s -> %s", old.value_nick, new.value_nick)
 
         return True

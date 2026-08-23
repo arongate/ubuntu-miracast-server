@@ -135,8 +135,8 @@ def parse_rtsp_request(data: bytes) -> RTSPRequest:
     # Split header and body
     try:
         text = data.decode("utf-8", errors="replace")
-    except Exception:
-        raise RTSPParseError("Invalid encoding")
+    except Exception as e:
+        raise RTSPParseError("Invalid encoding") from e
 
     # Find header/body separator
     separator_idx = text.find("\r\n\r\n")
@@ -148,10 +148,10 @@ def parse_rtsp_request(data: bytes) -> RTSPRequest:
             body_text = ""
         else:
             header_text = text[:separator_idx]
-            body_text = text[separator_idx + 2:]
+            body_text = text[separator_idx + 2 :]
     else:
         header_text = text[:separator_idx]
-        body_text = text[separator_idx + 4:]
+        body_text = text[separator_idx + 4 :]
 
     # Validate header size
     if len(header_text.encode("utf-8")) > _MAX_HEADER_SIZE:
@@ -210,8 +210,8 @@ def parse_rtsp_request(data: bytes) -> RTSPRequest:
 
     try:
         cseq = int(cseq_str)
-    except ValueError:
-        raise RTSPParseError(f"Invalid CSeq value: {cseq_str!r}")
+    except ValueError as e:
+        raise RTSPParseError(f"Invalid CSeq value: {cseq_str!r}") from e
 
     if cseq < 0:
         raise RTSPParseError(f"Invalid CSeq value: {cseq}")
@@ -382,9 +382,7 @@ def parse_wfd_parameters(body: str) -> WFDParameters:
             params.video_codec = "H264"
             # Try to determine resolution from CEA bitmap
             if params.video_formats:
-                params.resolution = _resolution_from_cea_bitmap(
-                    params.video_formats.cea_bitmap
-                )
+                params.resolution = _resolution_from_cea_bitmap(params.video_formats.cea_bitmap)
 
         elif key == "wfd_audio_codecs":
             params.audio_codecs = _parse_audio_codecs(value)
@@ -397,7 +395,7 @@ def parse_wfd_parameters(body: str) -> WFDParameters:
         elif key == "wfd_client_rtp_ports":
             params.client_rtp_ports = value
             # Extract RTP port from "RTP/AVP/UDP;unicast <port> 0 mode=play"
-            rtp_match = re.search(r"(\d+)", value.split(";")[-1] if ";" in value else value)
+            re.search(r"(\d+)", value.split(";")[-1] if ";" in value else value)
             parts = value.split()
             if len(parts) >= 2:
                 try:

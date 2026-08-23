@@ -11,9 +11,7 @@ _MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 def _validate_mac_address(value: str, field_name: str) -> None:
     """Validate that value is a valid MAC address in XX:XX:XX:XX:XX:XX format."""
     if not _MAC_PATTERN.match(value):
-        raise ValueError(
-            f"{field_name}: must be a valid MAC address in XX:XX:XX:XX:XX:XX format"
-        )
+        raise ValueError(f"{field_name}: must be a valid MAC address in XX:XX:XX:XX:XX:XX format")
 
 
 def _validate_ipv4_address(value: str, field_name: str) -> None:
@@ -29,14 +27,12 @@ def _validate_ipv4_address(value: str, field_name: str) -> None:
             )
         try:
             octet = int(part)
-        except ValueError:
+        except ValueError as e:
             raise ValueError(
                 f"{field_name}: must be a valid IPv4 address in dotted-decimal notation"
-            )
+            ) from e
         if octet < 0 or octet > 255:
-            raise ValueError(
-                f"{field_name}: must be a valid IPv4 address (octets must be 0-255)"
-            )
+            raise ValueError(f"{field_name}: must be a valid IPv4 address (octets must be 0-255)")
 
 
 def _validate_group_interface(value: str, field_name: str) -> None:
@@ -97,9 +93,7 @@ def _validate_frames(frames_decoded: int, frames_dropped: int) -> None:
     if frames_dropped < 0:
         raise ValueError("frames_dropped: must be a non-negative integer")
     if frames_decoded < frames_dropped:
-        raise ValueError(
-            "frames_decoded: must be greater than or equal to frames_dropped"
-        )
+        raise ValueError("frames_decoded: must be greater than or equal to frames_dropped")
 
 
 @dataclass
@@ -223,7 +217,13 @@ class ServerSessionRecord:
             stats_data = data["stats"]
             if not isinstance(stats_data, dict):
                 raise ValueError("stats must be a dictionary")
-            for key in ("start_time", "duration", "data_received", "frames_decoded", "frames_dropped"):
+            for key in (
+                "start_time",
+                "duration",
+                "data_received",
+                "frames_decoded",
+                "frames_dropped",
+            ):
                 if key not in stats_data:
                     raise ValueError(f"stats missing required field: {key}")
 

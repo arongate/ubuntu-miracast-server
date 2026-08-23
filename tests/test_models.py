@@ -1,7 +1,8 @@
 """Tests for IncomingConnection data model validation."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 
 from miracast_server.models import IncomingConnection
 
@@ -323,12 +324,11 @@ class TestIncomingConnectionPeerName:
         assert conn.peer_name == name
 
 
-
 # ============================================================================
 # Tests for ReceiverStats, SourceInfo, and ServerSessionRecord (Task 2.2)
 # ============================================================================
 
-from miracast_server.models import ReceiverStats, SourceInfo, ServerSessionRecord
+from miracast_server.models import ReceiverStats, ServerSessionRecord, SourceInfo
 
 
 class TestReceiverStatsValidation:

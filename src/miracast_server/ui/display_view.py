@@ -11,7 +11,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import GLib, Gtk
 
 logger = logging.getLogger(__name__)
 
@@ -281,9 +281,7 @@ class DisplayView(Gtk.Box):
         # Auto-hide after 3 seconds
         if self._fullscreen_controls_timeout:
             GLib.source_remove(self._fullscreen_controls_timeout)
-        self._fullscreen_controls_timeout = GLib.timeout_add_seconds(
-            3, self._hide_controls
-        )
+        self._fullscreen_controls_timeout = GLib.timeout_add_seconds(3, self._hide_controls)
 
     def _hide_controls(self) -> bool:
         """Hide the fullscreen controls."""

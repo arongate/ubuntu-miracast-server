@@ -59,11 +59,10 @@ class SettingsView(Gtk.ScrolledWindow):
 
         # Start minimized
         self._start_minimized_row = Adw.SwitchRow(title="Start Minimized")
-        self._start_minimized_row.set_active(
-            self._config.get("general", "start_minimized", False)
+        self._start_minimized_row.set_active(self._config.get("general", "start_minimized", False))
+        self._start_minimized_row.connect(
+            "notify::active", self._on_switch_changed, "general", "start_minimized"
         )
-        self._start_minimized_row.connect("notify::active", self._on_switch_changed,
-                                          "general", "start_minimized")
         general_group.add(self._start_minimized_row)
 
         # Fullscreen on stream
@@ -71,11 +70,10 @@ class SettingsView(Gtk.ScrolledWindow):
             title="Fullscreen on Stream",
             subtitle="Automatically enter fullscreen when stream starts",
         )
-        self._fullscreen_row.set_active(
-            self._config.get("general", "fullscreen_on_stream", True)
+        self._fullscreen_row.set_active(self._config.get("general", "fullscreen_on_stream", True))
+        self._fullscreen_row.connect(
+            "notify::active", self._on_switch_changed, "general", "fullscreen_on_stream"
         )
-        self._fullscreen_row.connect("notify::active", self._on_switch_changed,
-                                     "general", "fullscreen_on_stream")
         general_group.add(self._fullscreen_row)
 
         # Log level
@@ -94,19 +92,16 @@ class SettingsView(Gtk.ScrolledWindow):
 
         # RTSP port
         self._rtsp_port_row = Adw.EntryRow(title="RTSP Port")
-        self._rtsp_port_row.set_text(
-            str(self._config.get("streaming", "rtsp_port", 7236))
-        )
+        self._rtsp_port_row.set_text(str(self._config.get("streaming", "rtsp_port", 7236)))
         self._rtsp_port_row.connect("changed", self._on_rtsp_port_changed)
         streaming_group.add(self._rtsp_port_row)
 
         # Audio enabled
         self._audio_row = Adw.SwitchRow(title="Audio Enabled")
-        self._audio_row.set_active(
-            self._config.get("streaming", "audio_enabled", True)
+        self._audio_row.set_active(self._config.get("streaming", "audio_enabled", True))
+        self._audio_row.connect(
+            "notify::active", self._on_switch_changed, "streaming", "audio_enabled"
         )
-        self._audio_row.connect("notify::active", self._on_switch_changed,
-                                "streaming", "audio_enabled")
         streaming_group.add(self._audio_row)
 
         # Max resolution
@@ -162,9 +157,7 @@ class SettingsView(Gtk.ScrolledWindow):
         self._go_intent_row = Adw.SpinRow.new_with_range(0, 15, 1)
         self._go_intent_row.set_title("GO Intent")
         self._go_intent_row.set_subtitle("Higher values prefer being Group Owner (0-15)")
-        self._go_intent_row.set_value(
-            self._config.get("network", "go_intent", 15)
-        )
+        self._go_intent_row.set_value(self._config.get("network", "go_intent", 15))
         self._go_intent_row.connect("notify::value", self._on_go_intent_changed)
         network_group.add(self._go_intent_row)
 
@@ -172,9 +165,7 @@ class SettingsView(Gtk.ScrolledWindow):
         self._timeout_row = Adw.SpinRow.new_with_range(1, 120, 1)
         self._timeout_row.set_title("Connection Timeout")
         self._timeout_row.set_subtitle("Seconds to wait for P2P group formation (1-120)")
-        self._timeout_row.set_value(
-            self._config.get("network", "connection_timeout", 30)
-        )
+        self._timeout_row.set_value(self._config.get("network", "connection_timeout", 30))
         self._timeout_row.connect("notify::value", self._on_timeout_changed)
         network_group.add(self._timeout_row)
 
@@ -183,11 +174,10 @@ class SettingsView(Gtk.ScrolledWindow):
             title="Auto Accept Connections",
             subtitle="Automatically accept incoming Miracast connections",
         )
-        self._auto_accept_row.set_active(
-            self._config.get("network", "auto_accept", True)
+        self._auto_accept_row.set_active(self._config.get("network", "auto_accept", True))
+        self._auto_accept_row.connect(
+            "notify::active", self._on_switch_changed, "network", "auto_accept"
         )
-        self._auto_accept_row.connect("notify::active", self._on_switch_changed,
-                                      "network", "auto_accept")
         network_group.add(self._auto_accept_row)
 
         # ─── Service Settings ─────────────────────────────────────────
@@ -199,11 +189,8 @@ class SettingsView(Gtk.ScrolledWindow):
             title="Enable Service Mode",
             subtitle="Run as a background systemd user service",
         )
-        self._service_row.set_active(
-            self._config.get("service", "enabled", False)
-        )
-        self._service_row.connect("notify::active", self._on_switch_changed,
-                                  "service", "enabled")
+        self._service_row.set_active(self._config.get("service", "enabled", False))
+        self._service_row.connect("notify::active", self._on_switch_changed, "service", "enabled")
         service_group.add(self._service_row)
 
         # Virtual display
@@ -211,20 +198,17 @@ class SettingsView(Gtk.ScrolledWindow):
             title="Virtual Display",
             subtitle="Use a virtual display in service mode",
         )
-        self._virtual_display_row.set_active(
-            self._config.get("service", "virtual_display", False)
+        self._virtual_display_row.set_active(self._config.get("service", "virtual_display", False))
+        self._virtual_display_row.connect(
+            "notify::active", self._on_switch_changed, "service", "virtual_display"
         )
-        self._virtual_display_row.connect("notify::active", self._on_switch_changed,
-                                          "service", "virtual_display")
         service_group.add(self._virtual_display_row)
 
         # Idle timeout
         self._idle_timeout_row = Adw.SpinRow.new_with_range(0, 86400, 60)
         self._idle_timeout_row.set_title("Idle Timeout")
         self._idle_timeout_row.set_subtitle("Seconds before service exits when idle (0 = disabled)")
-        self._idle_timeout_row.set_value(
-            self._config.get("service", "idle_timeout", 0)
-        )
+        self._idle_timeout_row.set_value(self._config.get("service", "idle_timeout", 0))
         self._idle_timeout_row.connect("notify::value", self._on_idle_timeout_changed)
         service_group.add(self._idle_timeout_row)
 

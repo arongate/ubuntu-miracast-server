@@ -6,7 +6,6 @@ and wires them together via GObject signals.
 
 import argparse
 import logging
-import os
 import signal
 import subprocess
 import sys
@@ -17,13 +16,12 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Gst", "1.0")
-from gi.repository import Adw, Gio, GLib, Gst
+from gi.repository import Adw, Gio, Gst
 
 from miracast_server.advertiser import MiracastAdvertiser
 from miracast_server.config import ServerConfig
 from miracast_server.connection import ConnectionHandler
 from miracast_server.history import ServerSessionHistory
-from miracast_server.models import SourceInfo
 from miracast_server.p2p_supplicant import P2PSupplicantManager
 from miracast_server.receiver import MiracastReceiver
 
@@ -81,8 +79,12 @@ class MiracastServerApp(Adw.Application):
     via GObject signal connections.
     """
 
-    def __init__(self, device_name: str | None = None, start_fullscreen: bool = False,
-                 p2p_interface: str | None = None):
+    def __init__(
+        self,
+        device_name: str | None = None,
+        start_fullscreen: bool = False,
+        p2p_interface: str | None = None,
+    ):
         """Initialize the application.
 
         Args:
@@ -128,9 +130,7 @@ class MiracastServerApp(Adw.Application):
 
         # Determine P2P interface: CLI flag > config > auto-detect
         p2p_interface = (
-            self._p2p_interface_override
-            or self.config.get("network", "p2p_interface", "")
-            or None
+            self._p2p_interface_override or self.config.get("network", "p2p_interface", "") or None
         )
 
         # Try to start a dedicated wpa_supplicant for a secondary adapter.
@@ -217,9 +217,7 @@ class MiracastServerApp(Adw.Application):
         # Start listening on the group interface (sets up DHCP + arms WPS + monitors events)
         self.connection_handler.start_listening(group_interface)
 
-    def _start_dedicated_supplicant(
-        self, p2p_interface: str | None, device_name: str
-    ) -> None:
+    def _start_dedicated_supplicant(self, p2p_interface: str | None, device_name: str) -> None:
         """Try to start a dedicated wpa_supplicant on a secondary adapter.
 
         Looks for a disconnected Wi-Fi adapter suitable for P2P, starts a
@@ -232,7 +230,11 @@ class MiracastServerApp(Adw.Application):
 
         if p2p_interface:
             # User specified an interface — use its parent
-            target_iface = p2p_interface.replace("p2p-dev-", "") if p2p_interface.startswith("p2p-dev-") else p2p_interface
+            target_iface = (
+                p2p_interface.replace("p2p-dev-", "")
+                if p2p_interface.startswith("p2p-dev-")
+                else p2p_interface
+            )
         else:
             # Auto-detect: find a disconnected adapter not used for internet
             interfaces = list_p2p_interfaces()
@@ -286,14 +288,10 @@ class MiracastServerApp(Adw.Application):
           Receiver.stream-error → History.add_session (partial) + return to advertising
         """
         # Connection → Receiver
-        self.connection_handler.connect(
-            "connection-received", self._on_connection_start_receiving
-        )
+        self.connection_handler.connect("connection-received", self._on_connection_start_receiving)
 
         # Connection error → return to advertising
-        self.connection_handler.connect(
-            "connection-error", self._on_connection_error_recovery
-        )
+        self.connection_handler.connect("connection-error", self._on_connection_error_recovery)
 
         # Stream end → History + return to advertising
         self.receiver.connect("stream-stopped", self._on_stream_ended)
@@ -310,7 +308,8 @@ class MiracastServerApp(Adw.Application):
             return
         logger.info(
             "Source connected (%s) — starting RTSP client to %s:7236",
-            connection.peer_address, connection.peer_ip,
+            connection.peer_address,
+            connection.peer_ip,
         )
         self.receiver.start_receiving(connection)
 
@@ -430,6 +429,7 @@ def main() -> int:
 
     if args.service:
         from miracast_server.service import run_as_service
+
         return run_as_service(device_name=args.name, p2p_interface=args.interface)
 
     # Set up signal handling for graceful shutdown

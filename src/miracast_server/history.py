@@ -56,7 +56,7 @@ class ServerSessionHistory:
             return []
 
         try:
-            with open(self.history_path, "r") as f:
+            with open(self.history_path) as f:
                 data = json.load(f)
         except (json.JSONDecodeError, ValueError, OSError) as e:
             logger.warning(
@@ -132,9 +132,7 @@ class ServerSessionHistory:
         except OSError:
             pass
 
-    def add_session(
-        self, source_info: SourceInfo, stats: ReceiverStats
-    ) -> ServerSessionRecord:
+    def add_session(self, source_info: SourceInfo, stats: ReceiverStats) -> ServerSessionRecord:
         """Add a new session record.
 
         Creates a ServerSessionRecord with the current timestamp, appends it
@@ -192,9 +190,7 @@ class ServerSessionHistory:
         try:
             self._write_history()
         except OSError as e:
-            logger.error(
-                "persist-error: Failed to clear history file %s: %s", self.history_path, e
-            )
+            logger.error("persist-error: Failed to clear history file %s: %s", self.history_path, e)
             # Restore previous state on failure
             self.sessions = previous_sessions
             return

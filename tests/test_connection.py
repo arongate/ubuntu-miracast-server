@@ -1,8 +1,7 @@
 """Tests for ConnectionHandler — Autonomous GO WPS PIN flow."""
 
-from unittest.mock import MagicMock, patch, call
 from datetime import datetime
-import pytest
+from unittest.mock import MagicMock, patch
 
 from miracast_server.connection import ConnectionHandler, _generate_pin
 
@@ -143,6 +142,7 @@ class TestConnectionHandlerEventProcessing:
 
         # Simulate an active connection
         from miracast_server.models import IncomingConnection
+
         handler._active_connection = IncomingConnection(
             peer_address="aa:bb:cc:dd:ee:ff",
             peer_ip="192.168.49.10",
