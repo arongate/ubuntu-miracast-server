@@ -88,6 +88,22 @@ jobs:
           name: coverage-report
           path: coverage.xml
 
+  # ─── Security scanning ─────────────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install security tools
+        run: pip install bandit --break-system-packages
+
+      - name: Run bandit (Python SAST)
+        run: bandit -r src/ -ll -ii -c pyproject.toml
+
+      - name: Subprocess safety audit
+        run: python3 scripts/check_subprocess_safety.py
+
   # ─── Commit message lint ────────────────────────────────────────────────────
   commit-lint:
     name: Commit Lint

@@ -10,8 +10,12 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
-# Allowed characters for wpa_cli parameters: alphanumeric, colons, hyphens, underscores
-_WPA_PARAM_PATTERN = re.compile(r"^[a-zA-Z0-9:\-_]+$")
+# Allowed characters for wpa_cli parameters: alphanumeric, colons, hyphens, underscores, dots, slashes, spaces
+_WPA_PARAM_PATTERN = re.compile(r"^[a-zA-Z0-9:\-_./ ]+$")
+_WPA_PARAM_MAX_LENGTH = 256
+
+# Characters that could be used for command injection in shell contexts
+_WPA_DANGEROUS_CHARS = set(";|`$&\n\r\x00<>(){}")
 
 # ─── Codec and RTSP Security Constants ────────────────────────────────────────
 
@@ -164,21 +168,39 @@ def _get_interface_info(iface_name: str, parent: str) -> dict[str, str]:
     }
 
 
-def _validate_wpa_param(param: str) -> bool:
-    """Validate a wpa_cli parameter against the allowlist.
+def _validate_wpa_param(param: str) -> str:
+    """Validate and sanitize a wpa_cli parameter.
 
-    A parameter is valid if and only if every character is alphanumeric,
-    a colon, a hyphen, or an underscore.
+    Ensures the parameter does not contain shell metacharacters that could
+    enable command injection. This is a CRITICAL security boundary because
+    these parameters flow into subprocess calls that run with sudo.
 
     Args:
         param: The parameter string to validate.
 
     Returns:
-        True if the parameter is valid, False otherwise.
+        The validated parameter string (unchanged if valid).
+
+    Raises:
+        ValueError: If the parameter contains dangerous characters,
+                    is empty, or exceeds maximum length.
     """
     if not param:
-        return False
-    return bool(_WPA_PARAM_PATTERN.match(param))
+        raise ValueError("wpa_cli parameter must not be empty")
+
+    if len(param) > _WPA_PARAM_MAX_LENGTH:
+        raise ValueError(f"wpa_cli parameter too long ({len(param)} > {_WPA_PARAM_MAX_LENGTH})")
+
+    # Check for dangerous characters (command injection vectors)
+    dangerous_found = _WPA_DANGEROUS_CHARS.intersection(param)
+    if dangerous_found:
+        raise ValueError(f"wpa_cli parameter contains dangerous characters: {dangerous_found!r}")
+
+    # Additional pattern check: only allow safe characters
+    if not _WPA_PARAM_PATTERN.match(param):
+        raise ValueError(f"wpa_cli parameter contains invalid characters: {param!r}")
+
+    return param
 
 
 def _find_p2p_interface() -> tuple[str | None, str | None]:
@@ -353,20 +375,12 @@ def _run_wpa_cli(
         RuntimeError: If the wpa_cli command fails or times out.
     """
     # Validate interface
-    if not _validate_wpa_param(interface):
-        raise ValueError(
-            f"Invalid interface name '{interface}': "
-            "only alphanumeric characters, colons, hyphens, and underscores are allowed."
-        )
+    _validate_wpa_param(interface)
 
     # Validate arguments
     args_to_validate = args[:-1] if (skip_last_validation and args) else args
     for arg in args_to_validate:
-        if not _validate_wpa_param(arg):
-            raise ValueError(
-                f"Invalid wpa_cli parameter '{arg}': "
-                "only alphanumeric characters, colons, hyphens, and underscores are allowed."
-            )
+        _validate_wpa_param(arg)
 
     # Build command as a list (no shell=True)
     cmd = ["sudo", "wpa_cli"]

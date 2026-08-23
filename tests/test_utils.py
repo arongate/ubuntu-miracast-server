@@ -11,55 +11,68 @@ class TestValidateWpaParam:
     """Tests for _validate_wpa_param."""
 
     def test_valid_alphanumeric(self):
-        assert _validate_wpa_param("wlan0") is True
+        assert _validate_wpa_param("wlan0") == "wlan0"
 
     def test_valid_with_colons(self):
-        assert _validate_wpa_param("AA:BB:CC:DD:EE:FF") is True
+        assert _validate_wpa_param("AA:BB:CC:DD:EE:FF") == "AA:BB:CC:DD:EE:FF"
 
     def test_valid_with_hyphens(self):
-        assert _validate_wpa_param("p2p-dev-wlan0") is True
+        assert _validate_wpa_param("p2p-dev-wlan0") == "p2p-dev-wlan0"
 
     def test_valid_with_underscores(self):
-        assert _validate_wpa_param("wifi_display") is True
+        assert _validate_wpa_param("wifi_display") == "wifi_display"
 
     def test_valid_mixed(self):
-        assert _validate_wpa_param("p2p-dev_wlan0:iface") is True
-
-    def test_invalid_space(self):
-        assert _validate_wpa_param("wlan 0") is False
+        assert _validate_wpa_param("p2p-dev_wlan0:iface") == "p2p-dev_wlan0:iface"
 
     def test_invalid_semicolon(self):
-        assert _validate_wpa_param("wlan0;rm -rf /") is False
+        with pytest.raises(ValueError):
+            _validate_wpa_param("wlan0;rm -rf /")
 
     def test_invalid_pipe(self):
-        assert _validate_wpa_param("wlan0|cat") is False
+        with pytest.raises(ValueError):
+            _validate_wpa_param("wlan0|cat")
 
     def test_invalid_dollar(self):
-        assert _validate_wpa_param("$HOME") is False
+        with pytest.raises(ValueError):
+            _validate_wpa_param("$HOME")
 
     def test_invalid_backtick(self):
-        assert _validate_wpa_param("`whoami`") is False
+        with pytest.raises(ValueError):
+            _validate_wpa_param("`whoami`")
 
     def test_invalid_ampersand(self):
-        assert _validate_wpa_param("wlan0&") is False
-
-    def test_invalid_slash(self):
-        assert _validate_wpa_param("/etc/passwd") is False
+        with pytest.raises(ValueError):
+            _validate_wpa_param("wlan0&")
 
     def test_invalid_equals(self):
-        assert _validate_wpa_param("key=value") is False
+        with pytest.raises(ValueError):
+            _validate_wpa_param("key=value")
 
     def test_empty_string(self):
-        assert _validate_wpa_param("") is False
+        with pytest.raises(ValueError):
+            _validate_wpa_param("")
 
     def test_numeric_only(self):
-        assert _validate_wpa_param("12345") is True
+        assert _validate_wpa_param("12345") == "12345"
 
     def test_single_char(self):
-        assert _validate_wpa_param("a") is True
+        assert _validate_wpa_param("a") == "a"
 
     def test_all_allowed_chars(self):
-        assert _validate_wpa_param("aZ0-_:") is True
+        assert _validate_wpa_param("aZ0-_:") == "aZ0-_:"
+
+    def test_valid_with_spaces(self):
+        """Device names can have spaces."""
+        assert _validate_wpa_param("Ubuntu Miracast Server") == "Ubuntu Miracast Server"
+
+    def test_valid_with_dots(self):
+        """Version strings and IPs have dots."""
+        assert _validate_wpa_param("192.168.1.1") == "192.168.1.1"
+
+    def test_valid_with_slash(self):
+        """Paths like ctrl_path use slashes."""
+        assert _validate_wpa_param("/tmp/miracast-wpa-p2p") == "/tmp/miracast-wpa-p2p"
 
 
 class TestFindP2pInterface:
@@ -142,13 +155,13 @@ class TestRunWpaCli:
 
     @patch("miracast_server.utils.subprocess.run")
     def test_invalid_interface_raises(self, mock_run):
-        with pytest.raises(ValueError, match="Invalid interface name"):
+        with pytest.raises(ValueError, match="dangerous characters"):
             _run_wpa_cli("wlan0; rm -rf /", "p2p_listen")
         mock_run.assert_not_called()
 
     @patch("miracast_server.utils.subprocess.run")
     def test_invalid_arg_raises(self, mock_run):
-        with pytest.raises(ValueError, match="Invalid wpa_cli parameter"):
+        with pytest.raises(ValueError, match="dangerous characters"):
             _run_wpa_cli("p2p-dev-wlo1", "set$(whoami)")
         mock_run.assert_not_called()
 
@@ -194,5 +207,5 @@ class TestRunWpaCli:
     def test_validates_all_args_before_executing(self, mock_run):
         """Ensure no subprocess call is made if any arg is invalid."""
         with pytest.raises(ValueError):
-            _run_wpa_cli("p2p-dev-wlo1", "valid_arg", "invalid arg")
+            _run_wpa_cli("p2p-dev-wlo1", "valid_arg", "invalid;arg")
         mock_run.assert_not_called()

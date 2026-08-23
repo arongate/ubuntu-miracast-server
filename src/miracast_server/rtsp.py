@@ -533,6 +533,9 @@ def build_capability_response_body(
 def validate_request_size(data: bytes) -> None:
     """Validate that raw request data does not exceed size limits.
 
+    Checks both individual limits (header < 8KB, body < 64KB) and
+    combined size to prevent memory exhaustion attacks.
+
     Args:
         data: Raw bytes of the incoming request.
 
@@ -544,3 +547,50 @@ def validate_request_size(data: bytes) -> None:
             "Request exceeds maximum allowed size",
             status_code=RTSP_REQUEST_ENTITY_TOO_LARGE,
         )
+
+    # Check header size independently
+    separator = data.find(b"\r\n\r\n")
+    if separator >= 0:
+        header_size = separator
+        body_size = len(data) - separator - 4
+        if header_size > _MAX_HEADER_SIZE:
+            raise RTSPParseError(
+                f"Request headers exceed {_MAX_HEADER_SIZE} bytes",
+                status_code=RTSP_REQUEST_ENTITY_TOO_LARGE,
+            )
+        if body_size > _MAX_BODY_SIZE:
+            raise RTSPParseError(
+                f"Request body exceeds {_MAX_BODY_SIZE} bytes",
+                status_code=RTSP_REQUEST_ENTITY_TOO_LARGE,
+            )
+    else:
+        # No separator found — entire data is headers
+        if len(data) > _MAX_HEADER_SIZE:
+            raise RTSPParseError(
+                f"Request headers exceed {_MAX_HEADER_SIZE} bytes (no body separator)",
+                status_code=RTSP_REQUEST_ENTITY_TOO_LARGE,
+            )
+
+    # Also check Content-Length header for declared sizes
+    try:
+        text = data.decode("utf-8", errors="replace")
+        for line in text.split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                cl_value = line.split(":", 1)[1].strip()
+                content_length = int(cl_value)
+                if content_length > _MAX_BODY_SIZE:
+                    raise RTSPParseError(
+                        f"Content-Length {content_length} exceeds {_MAX_BODY_SIZE} bytes",
+                        status_code=RTSP_REQUEST_ENTITY_TOO_LARGE,
+                    )
+                if content_length < 0:
+                    raise RTSPParseError(
+                        "Negative Content-Length",
+                        status_code=RTSP_BAD_REQUEST,
+                    )
+                break
+    except (ValueError, OverflowError) as e:
+        raise RTSPParseError(
+            "Invalid Content-Length value",
+            status_code=RTSP_BAD_REQUEST,
+        ) from e
