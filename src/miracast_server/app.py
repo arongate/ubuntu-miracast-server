@@ -214,7 +214,7 @@ class MiracastServerApp(Adw.Application):
         if self.p2p_supplicant and self.p2p_supplicant.is_running:
             self.connection_handler._ctrl_path = self.p2p_supplicant.ctrl_path
 
-        # Start listening on the group interface (arms WPS + monitors events)
+        # Start listening on the group interface (sets up DHCP + arms WPS + monitors events)
         self.connection_handler.start_listening(group_interface)
 
     def _start_dedicated_supplicant(
@@ -300,10 +300,18 @@ class MiracastServerApp(Adw.Application):
         self.receiver.connect("stream-error", self._on_stream_error_record)
 
     def _on_connection_start_receiving(self, handler, connection) -> None:
-        """Start receiver when a P2P connection is established."""
+        """Start receiver when a P2P connection is established.
+
+        The receiver will connect TO the source's RTSP server at <peer_ip>:7236
+        and negotiate the WFD stream (M1-M7).
+        """
         if self.receiver.is_receiving:
             logger.warning("Ignoring new connection — already receiving")
             return
+        logger.info(
+            "Source connected (%s) — starting RTSP client to %s:7236",
+            connection.peer_address, connection.peer_ip,
+        )
         self.receiver.start_receiving(connection)
 
     def _on_connection_error_recovery(self, handler, error_msg: str) -> None:

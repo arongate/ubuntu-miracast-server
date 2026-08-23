@@ -14,6 +14,7 @@ Flow:
 """
 
 import logging
+import os
 import random
 import re
 import select
@@ -93,7 +94,7 @@ class ConnectionHandler(GObject.Object):
     def start_listening(self, group_interface: str) -> None:
         """Start listening for connections on the P2P group interface.
 
-        Arms WPS PIN and monitors for AP-STA-CONNECTED events.
+        Sets up IP/DHCP immediately, arms WPS PIN, and monitors for events.
 
         Args:
             group_interface: The P2P group interface (e.g., p2p-wlx...-0).
@@ -104,6 +105,9 @@ class ConnectionHandler(GObject.Object):
 
         self._group_interface = group_interface
         self._running = True
+
+        # Set up IP and DHCP FIRST (before any client tries to connect)
+        self._our_ip = self._setup_dhcp()
 
         # Generate and arm WPS PIN
         self._current_pin = _generate_pin()
@@ -147,18 +151,33 @@ class ConnectionHandler(GObject.Object):
         logger.info("Re-armed WPS with new PIN %s", self._current_pin)
 
     def _arm_wps_pin(self) -> None:
-        """Arm the WPS registrar on the group interface with the current PIN."""
+        """Arm the WPS registrar on the group interface with the current PIN.
+
+        Retries up to 10 times with 1-second delays because the group interface's
+        control socket may not be ready immediately after p2p_group_add.
+        """
         if not self._group_interface or not self._current_pin:
             return
-        try:
-            result = _run_wpa_cli(
-                self._group_interface, "wps_pin", "any", self._current_pin,
-                ctrl_path=self._ctrl_path,
-            )
-            logger.debug("wps_pin any %s → %s", self._current_pin, result.strip())
-        except (RuntimeError, ValueError) as e:
-            logger.error("Failed to arm WPS PIN: %s", e)
-            GLib.idle_add(self.emit, "connection-error", f"Failed to arm WPS: {e}")
+
+        for attempt in range(10):
+            try:
+                result = _run_wpa_cli(
+                    self._group_interface, "wps_pin", "any", self._current_pin,
+                    ctrl_path=self._ctrl_path,
+                )
+                if "FAIL" not in result:
+                    logger.info("WPS PIN armed: %s on %s (attempt %d)",
+                                self._current_pin, self._group_interface, attempt + 1)
+                    return
+                else:
+                    logger.debug("wps_pin attempt %d failed, retrying...", attempt + 1)
+            except (RuntimeError, ValueError) as e:
+                logger.debug("wps_pin attempt %d error: %s", attempt + 1, e)
+
+            time.sleep(1)
+
+        logger.error("Failed to arm WPS PIN after 10 attempts")
+        GLib.idle_add(self.emit, "connection-error", "Failed to arm WPS PIN — group interface not ready")
 
     def _event_monitor_loop(self) -> None:
         """Monitor the GROUP interface for AP-STA-CONNECTED events."""
@@ -205,8 +224,16 @@ class ConnectionHandler(GObject.Object):
 
             logger.info("Event monitor attached to %s — waiting for connections", self._group_interface)
 
-            # Main event loop
+            # Main event loop — re-arm WPS every 90 seconds (registrar timeout is ~120s)
+            last_rearm = time.monotonic()
+            _WPS_REARM_INTERVAL = 90
+
             while self._running:
+                # Re-arm WPS PIN periodically to prevent registrar timeout
+                if time.monotonic() - last_rearm >= _WPS_REARM_INTERVAL:
+                    self._arm_wps_pin()
+                    last_rearm = time.monotonic()
+
                 ready, _, _ = select.select([proc.stdout], [], [], 1.0)
                 if not ready:
                     if proc.poll() is not None:
@@ -238,6 +265,12 @@ class ConnectionHandler(GObject.Object):
                 if match:
                     peer_mac = match.group(1)
                     self._handle_sta_connected(peer_mac)
+                    continue
+
+                # Handle WPS-PIN-NEEDED (phone trying but no PIN armed — re-arm immediately)
+                if "WPS-PIN-NEEDED" in line:
+                    logger.warning("WPS-PIN-NEEDED: re-arming PIN %s", self._current_pin)
+                    self._arm_wps_pin()
                     continue
 
                 # Handle AP-STA-DISCONNECTED
@@ -273,11 +306,19 @@ class ConnectionHandler(GObject.Object):
         """Handle a source device connecting via WPS."""
         logger.info("Source connected: %s", peer_mac)
 
-        # Set up DHCP on the group interface
-        our_ip = self._setup_dhcp()
+        # DHCP is already running (started in start_listening)
+        # Use our pre-configured IP
+        our_ip = self._our_ip if hasattr(self, '_our_ip') else "192.168.173.1"
 
-        # Determine peer IP (will be assigned by our DHCP server)
-        peer_ip = "192.168.49.10"  # First DHCP lease
+        # Wait for DHCP to complete — the phone needs to get an IP before we
+        # can connect to its RTSP server. Poll dnsmasq leases for up to 15s.
+        peer_ip = self._wait_for_dhcp_lease(peer_mac, timeout=15.0)
+        if not peer_ip:
+            # Fallback to first IP in range
+            peer_ip = "192.168.173.80"
+            logger.warning("Could not find DHCP lease for %s, using %s", peer_mac, peer_ip)
+
+        logger.info("Source %s got IP %s", peer_mac, peer_ip)
 
         connection = IncomingConnection(
             peer_address=peer_mac,
@@ -293,6 +334,52 @@ class ConnectionHandler(GObject.Object):
             self._active_connection = connection
 
         GLib.idle_add(self.emit, "connection-received", connection)
+
+    def _wait_for_dhcp_lease(self, peer_mac: str, timeout: float = 15.0) -> str | None:
+        """Wait for a DHCP lease to appear for the given MAC address.
+
+        Polls dnsmasq lease file and `ip neigh` for the peer's IP.
+
+        Args:
+            peer_mac: MAC address of the connected peer.
+            timeout: Maximum seconds to wait.
+
+        Returns:
+            Peer IP address or None if not found within timeout.
+        """
+        deadline = time.time() + timeout
+        mac_lower = peer_mac.lower()
+
+        while time.time() < deadline and self._running:
+            # Check dnsmasq leases file
+            try:
+                lease_file = "/var/lib/misc/dnsmasq.leases"
+                if os.path.exists(lease_file):
+                    with open(lease_file) as f:
+                        for line in f:
+                            parts = line.strip().split()
+                            if len(parts) >= 3 and parts[1].lower() == mac_lower:
+                                return parts[2]
+            except (OSError, PermissionError):
+                pass
+
+            # Also check ARP/neighbour table
+            try:
+                result = subprocess.run(
+                    ["ip", "neigh", "show", "dev", self._group_interface],
+                    capture_output=True, text=True, timeout=3,
+                )
+                for line in result.stdout.strip().split("\n"):
+                    if mac_lower in line.lower():
+                        parts = line.split()
+                        if parts:
+                            return parts[0]  # IP is first field
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+
+            time.sleep(1.0)
+
+        return None
 
     def _handle_sta_disconnected(self) -> None:
         """Handle source disconnection."""
@@ -312,10 +399,17 @@ class ConnectionHandler(GObject.Object):
         Assigns a static IP to our interface and starts dnsmasq for DHCP.
         Returns our IP address.
         """
-        our_ip = "192.168.49.1"
+        our_ip = "192.168.173.1"
         iface = self._group_interface
 
         try:
+            # Kill any stale dnsmasq on this interface from previous runs
+            subprocess.run(
+                ["sudo", "pkill", "-f", f"dnsmasq.*{iface}"],
+                capture_output=True, timeout=5,
+            )
+            time.sleep(0.3)
+
             # Assign static IP
             subprocess.run(
                 ["sudo", "ip", "addr", "flush", "dev", iface],
@@ -330,17 +424,20 @@ class ConnectionHandler(GObject.Object):
                 capture_output=True, timeout=5,
             )
 
-            # Start dnsmasq for DHCP
+            # Start dnsmasq for DHCP with router option
             subprocess.Popen(
                 [
                     "sudo", "dnsmasq",
                     f"--interface={iface}",
                     "--bind-interfaces",
-                    "--dhcp-range=192.168.49.10,192.168.49.50,255.255.255.0,1h",
+                    f"--dhcp-range=192.168.173.80,192.168.173.90,255.255.255.0,5m",
+                    f"--dhcp-option=3,{our_ip}",  # Router/gateway
+                    f"--dhcp-option=6,{our_ip}",  # DNS (us, even though we don't resolve)
                     "--no-daemon",
                     "--log-facility=-",
                     f"--except-interface=lo",
                     "--no-resolv",
+                    "--no-hosts",
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

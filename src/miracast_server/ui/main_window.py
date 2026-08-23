@@ -208,11 +208,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_connection_received(self, handler, connection) -> None:
         self._status_label.set_text(f"Connected: {connection.peer_name}")
+        self._display_view.hide_pin()
         self._display_view.set_state_connected(connection.peer_name)
-        # Dismiss PIN dialog if showing
-        if hasattr(self, "_pin_dialog") and self._pin_dialog:
-            self._pin_dialog.close()
-            self._pin_dialog = None
 
     def _on_connection_lost(self, handler) -> None:
         self._status_label.set_text("Connection lost")
@@ -221,38 +218,21 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _on_connection_error(self, handler, error_msg: str) -> None:
-        # Dismiss PIN dialog if showing
-        if hasattr(self, "_pin_dialog") and self._pin_dialog:
-            self._pin_dialog.close()
-            self._pin_dialog = None
-        # Reset UI to idle/advertising state
+        # Reset UI to idle/advertising state (PIN remains visible for retry)
         device_name = self.config.get("general", "device_name", "Ubuntu Miracast Server")
         self._status_label.set_text(f"Advertising as '{device_name}'")
         self._display_view.set_state_idle(device_name)
         logger.error("Connection error: %s", error_msg)
 
     def _on_pin_display(self, handler, pin: str, peer_addr: str) -> None:
-        """Display PIN code for the user to enter on the source device."""
-        self._status_label.set_text(f"Enter PIN on source device")
+        """Display PIN code persistently in the main display view."""
+        self._status_label.set_text(f"PIN: {pin} — Waiting for source to connect")
+        self._display_view.set_pin(pin)
         logger.info("Displaying PIN %s for peer %s", pin, peer_addr)
 
-        # Show PIN in a dialog
-        self._pin_dialog = Adw.MessageDialog(
-            transient_for=self,
-            heading="Connection PIN",
-            body=f"Enter this PIN on the source device:\n\n<span size='xx-large' weight='bold'>{pin}</span>\n\nConnecting to: {peer_addr}",
-        )
-        self._pin_dialog.set_body_use_markup(True)
-        self._pin_dialog.add_response("cancel", "Cancel")
-        self._pin_dialog.set_default_response("cancel")
-        self._pin_dialog.connect("response", self._on_pin_dialog_response)
-        self._pin_dialog.present()
-
     def _on_pin_dialog_response(self, dialog, response: str) -> None:
-        """Handle PIN dialog dismissal."""
-        if response == "cancel":
-            self.connection_handler.disconnect_peer()
-        self._pin_dialog = None
+        """Handle PIN dialog dismissal (legacy — no longer used)."""
+        pass
 
     def _on_stream_started(self, receiver) -> None:
         self._status_label.set_text("Receiving stream")

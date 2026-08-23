@@ -99,6 +99,16 @@ class P2PSupplicantManager:
 
         logger.info("Starting dedicated wpa_supplicant on %s", self._interface)
 
+        # Kill any stale wpa_supplicant on this interface from a previous crash
+        try:
+            subprocess.run(
+                ["sudo", "pkill", "-f", f"wpa_supplicant.*-i.*{self._interface}"],
+                capture_output=True, timeout=5,
+            )
+            time.sleep(0.5)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
         # Step 1: Unmanage from NetworkManager
         self._unmanage_from_nm()
 
@@ -255,7 +265,27 @@ class P2PSupplicantManager:
             device_name=self._device_name,
         )
         try:
-            # Write with sudo since /tmp may have sticky bit issues
+            # Remove stale file from previous run (may be owned by root)
+            if os.path.exists(self._conf_path):
+                try:
+                    os.unlink(self._conf_path)
+                except PermissionError:
+                    subprocess.run(
+                        ["sudo", "rm", "-f", self._conf_path],
+                        capture_output=True, timeout=5,
+                    )
+
+            # Also clean stale control socket directory
+            if os.path.exists(self._ctrl_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(self._ctrl_dir, ignore_errors=True)
+                except Exception:
+                    subprocess.run(
+                        ["sudo", "rm", "-rf", self._ctrl_dir],
+                        capture_output=True, timeout=5,
+                    )
+
             Path(self._conf_path).write_text(config_content)
             os.chmod(self._conf_path, 0o644)
             logger.debug("Wrote wpa_supplicant config to %s", self._conf_path)

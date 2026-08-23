@@ -107,11 +107,11 @@ class TestConnectionHandlerWPSArming:
 class TestConnectionHandlerEventProcessing:
     """Test AP-STA-CONNECTED event handling."""
 
-    @patch("miracast_server.connection.ConnectionHandler._setup_dhcp")
+    @patch("miracast_server.connection.ConnectionHandler._wait_for_dhcp_lease")
     @patch("miracast_server.connection.GLib.idle_add")
-    def test_handle_sta_connected_creates_connection(self, mock_idle, mock_dhcp):
+    def test_handle_sta_connected_creates_connection(self, mock_idle, mock_wait_dhcp):
         """AP-STA-CONNECTED must create an IncomingConnection and emit signal."""
-        mock_dhcp.return_value = "192.168.49.1"
+        mock_wait_dhcp.return_value = "192.168.173.80"
 
         handler = ConnectionHandler(p2p_interface="wlx123")
         handler._group_interface = "p2p-wlx123-0"
@@ -121,7 +121,8 @@ class TestConnectionHandlerEventProcessing:
         # Should have an active connection
         assert handler.active_connection is not None
         assert handler.active_connection.peer_address == "aa:bb:cc:dd:ee:ff"
-        assert handler.active_connection.our_ip == "192.168.49.1"
+        assert handler.active_connection.peer_ip == "192.168.173.80"
+        assert handler.active_connection.our_ip == "192.168.173.1"
         assert handler.active_connection.go_role is True
         assert handler.active_connection.group_interface == "p2p-wlx123-0"
 
@@ -180,7 +181,7 @@ class TestConnectionHandlerDHCP:
 
         ip = handler._setup_dhcp()
 
-        assert ip == "192.168.49.1"
+        assert ip == "192.168.173.1"
 
         # Must have called ip addr add
         ip_calls = [c for c in mock_run.call_args_list if "addr" in str(c) and "add" in str(c)]
@@ -196,13 +197,13 @@ class TestConnectionHandlerDHCP:
 class TestConnectionHandlerIntegrationFlow:
     """Integration test: full flow from start_listening through connection."""
 
-    @patch("miracast_server.connection.ConnectionHandler._setup_dhcp")
+    @patch("miracast_server.connection.ConnectionHandler._wait_for_dhcp_lease")
     @patch("miracast_server.connection._run_wpa_cli")
     @patch("miracast_server.connection.GLib.idle_add")
-    def test_full_flow_pin_to_connection(self, mock_idle, mock_wpa, mock_dhcp):
+    def test_full_flow_pin_to_connection(self, mock_idle, mock_wpa, mock_wait_dhcp):
         """Simulate the complete flow: arm PIN → source connects → connection-received."""
         mock_wpa.return_value = "OK"
-        mock_dhcp.return_value = "192.168.49.1"
+        mock_wait_dhcp.return_value = "192.168.173.80"
 
         handler = ConnectionHandler(p2p_interface="wlx123")
         handler._ctrl_path = "/tmp/ctrl"
@@ -222,7 +223,8 @@ class TestConnectionHandlerIntegrationFlow:
         conn = handler.active_connection
         assert conn is not None
         assert conn.peer_address == "be:10:7b:d4:5f:b8"
-        assert conn.our_ip == "192.168.49.1"
+        assert conn.peer_ip == "192.168.173.80"
+        assert conn.our_ip == "192.168.173.1"
         assert conn.go_role is True
 
         # Step 4: Simulate disconnect

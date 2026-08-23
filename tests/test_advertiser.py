@@ -18,8 +18,8 @@ class TestWFDSubelementEncoding:
         result = _encode_wfd_device_info(7236)
         # Port 7236 = 0x1C44
         assert "1C44" in result
-        # Device info = 0x0051 (Sink + Session Available + WSD)
-        assert "0051" in result
+        # Device info = 0x0011 (Sink + Session Available)
+        assert "0011" in result
 
     def test_custom_port(self):
         result = _encode_wfd_device_info(8000)

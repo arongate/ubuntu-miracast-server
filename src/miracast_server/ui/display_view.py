@@ -77,6 +77,30 @@ class DisplayView(Gtk.Box):
         self._device_name_label.add_css_class("dim-label")
         idle_box.append(self._device_name_label)
 
+        # PIN display (persistent, not a dialog)
+        self._pin_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self._pin_box.set_margin_top(24)
+        self._pin_box.set_halign(Gtk.Align.CENTER)
+
+        pin_label_header = Gtk.Label(label="Enter this PIN on your device:")
+        pin_label_header.add_css_class("dim-label")
+        self._pin_box.append(pin_label_header)
+
+        self._pin_label = Gtk.Label(label="")
+        self._pin_label.add_css_class("title-1")
+        self._pin_label.set_selectable(True)
+        self._pin_box.append(self._pin_label)
+
+        # Refresh PIN button
+        self._refresh_pin_btn = Gtk.Button(label="Refresh PIN")
+        self._refresh_pin_btn.set_halign(Gtk.Align.CENTER)
+        self._refresh_pin_btn.set_margin_top(12)
+        self._refresh_pin_btn.connect("clicked", self._on_refresh_pin_clicked)
+        self._pin_box.append(self._refresh_pin_btn)
+
+        self._pin_box.set_visible(False)
+        idle_box.append(self._pin_box)
+
         self._stack.add_named(idle_box, DisplayState.IDLE.value)
 
         # ─── Connected view ───────────────────────────────────────────
@@ -174,6 +198,22 @@ class DisplayView(Gtk.Box):
         self._stack.set_visible_child_name(DisplayState.IDLE.value)
         self._stats_revealer.set_reveal_child(False)
         self._controls_revealer.set_reveal_child(False)
+
+    def set_pin(self, pin: str) -> None:
+        """Display the WPS PIN persistently in the idle view."""
+        self._pin_label.set_text(pin)
+        self._pin_box.set_visible(True)
+
+    def hide_pin(self) -> None:
+        """Hide the PIN display."""
+        self._pin_box.set_visible(False)
+        self._pin_label.set_text("")
+
+    def _on_refresh_pin_clicked(self, button: Gtk.Button) -> None:
+        """Handle Refresh PIN button — request new PIN from connection handler."""
+        window = self.get_root()
+        if window and hasattr(window, "connection_handler"):
+            window.connection_handler.rearm_wps_pin()
 
     def set_state_connected(self, source_name: str) -> None:
         """Transition to connected state."""

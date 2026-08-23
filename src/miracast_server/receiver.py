@@ -1,10 +1,23 @@
-"""Miracast Receiver — RTSP session handling and GStreamer pipeline management.
+"""Miracast Receiver — RTSP client and GStreamer pipeline management.
 
-Handles the RTSP negotiation flow with the Miracast source, constructs and
-manages the GStreamer receive/decode/render pipeline, and monitors stream health.
+In the Wi-Fi Display (Miracast) protocol, the Sink (us) connects TO the
+Source's (phone's) RTSP server on port 7236. The Sink is the RTSP client.
+
+RTSP Message Flow (from lazycast/Wi-Fi Display spec):
+  Sink connects to Source:7236
+  M1: Source → OPTIONS → Sink replies 200 OK
+  M2: Sink → OPTIONS → Source replies 200 OK
+  M3: Source → GET_PARAMETER (query capabilities) → Sink replies with WFD params
+  M4: Source → SET_PARAMETER (chosen params) → Sink replies 200 OK
+  M5: Source → SET_PARAMETER (wfd_trigger_method: SETUP) → Sink replies 200 OK
+  M6: Sink → SETUP rtsp://source/wfd1.0/streamid=0 → Source replies with Session
+  M7: Sink → PLAY rtsp://source/wfd1.0/streamid=0 → Source replies 200 OK, starts RTP
 """
 
+import errno
+import fcntl
 import logging
+import os
 import socket
 import threading
 import time
@@ -18,21 +31,6 @@ gi.require_version("Gst", "1.0")
 from gi.repository import GLib, GObject, Gst
 
 from miracast_server.models import IncomingConnection, ReceiverStats, SourceInfo
-from miracast_server.rtsp import (
-    RTSPMethod,
-    RTSPParseError,
-    RTSPRequest,
-    WFDParameters,
-    build_capability_response_body,
-    build_options_request,
-    build_options_response,
-    build_response,
-    parse_rtsp_request,
-    parse_wfd_parameters,
-    validate_request_size,
-    RTSP_OK,
-    RTSP_BAD_REQUEST,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -44,21 +42,23 @@ _ALLOWED_VIDEO_CODECS = {"H264"}
 _ALLOWED_AUDIO_CODECS = {"AAC"}
 
 # Stream monitoring constants
-_RTP_TIMEOUT_SECONDS = 5.0
+_RTP_TIMEOUT_SECONDS = 15.0  # seconds without RTP data before declaring stream lost
 _PIPELINE_STATE_TIMEOUT_SECONDS = 5.0
 _STATS_INTERVAL_SECONDS = 1.0
 _FRAME_DROP_WARNING_THRESHOLD = 0.05  # 5%
 _FRAME_DROP_WINDOW_SECONDS = 10
-_RTSP_RENEGOTIATION_TIMEOUT = 10.0
 
 # Queue bounds
 _QUEUE_MAX_BUFFERS = 200
 _QUEUE_MAX_BYTES = 10485760  # 10 MB
 _QUEUE_MAX_TIME = 1000000000  # 1 second in nanoseconds
 
-# RTSP socket constants
-_RTSP_RECV_TIMEOUT = 30.0  # seconds to wait for initial RTSP
+# RTSP connection constants
+_RTSP_CONNECT_TIMEOUT = 30.0  # seconds to try connecting to source
+_RTSP_RECV_TIMEOUT = 30.0  # seconds to wait for RTSP messages
 _RTSP_BUFFER_SIZE = 16384
+_RTSP_PORT = 7236  # Standard WFD RTSP port on the source
+_RTP_PORT = 1028  # Our local RTP receive port
 
 
 def _validate_port(port: int) -> None:
@@ -279,7 +279,11 @@ class PipelineBuilder:
 
 
 class MiracastReceiver(GObject.Object):
-    """Manages RTSP session and GStreamer pipeline for receiving Miracast streams.
+    """Manages RTSP client session and GStreamer pipeline for receiving Miracast streams.
+
+    In Wi-Fi Display, the Sink (us) connects TO the Source's RTSP server.
+    After the P2P connection is established (AP-STA-CONNECTED + DHCP),
+    we connect to the source's port 7236 and negotiate the stream.
 
     GObject Signals:
       - stream-started: Stream playback has begun.
@@ -307,8 +311,8 @@ class MiracastReceiver(GObject.Object):
         """Initialize the receiver.
 
         Args:
-            rtsp_port: TCP port for RTSP control session.
-            rtp_port: UDP port for RTP media reception.
+            rtsp_port: TCP port for RTSP on the source (default 7236).
+            rtp_port: UDP port for RTP media reception on our side.
             headless: Whether to use fakesink (service mode).
             audio_enabled: Whether to enable audio decoding.
         """
@@ -328,10 +332,10 @@ class MiracastReceiver(GObject.Object):
 
         # Session state
         self._connection: IncomingConnection | None = None
-        self._wfd_params: WFDParameters | None = None
         self._session_id: str = ""
-        self._cseq: int = 0
+        self._cseq: int = 100  # Our CSeq counter for outgoing requests (M2, M6, M7)
         self._source_info: SourceInfo | None = None
+        self._source_ip: str = ""
 
         # Stats tracking
         self._start_time: datetime | None = None
@@ -344,6 +348,10 @@ class MiracastReceiver(GObject.Object):
         self._last_rtp_time: float = 0.0
         self._errors: int = 0
         self._use_hw_decode: bool = True
+
+        # WFD negotiated parameters
+        self._video_codec: str = "H264"
+        self._audio_codec: str = "AAC"
 
     @property
     def is_receiving(self) -> bool:
@@ -361,10 +369,10 @@ class MiracastReceiver(GObject.Object):
         return self._source_info
 
     def start_receiving(self, connection: IncomingConnection) -> None:
-        """Start receiving a Miracast stream.
+        """Start the RTSP client session with the connected source.
 
-        Binds an RTSP socket to the P2P interface IP and starts the RTSP
-        handler thread to negotiate with the source.
+        Connects to the source's RTSP server at <peer_ip>:7236 and
+        performs the WFD RTSP negotiation (M1-M7).
 
         Args:
             connection: The active P2P connection with the source.
@@ -374,6 +382,7 @@ class MiracastReceiver(GObject.Object):
             return
 
         self._connection = connection
+        self._source_ip = connection.peer_ip
         self._running = True
         self._start_time = datetime.now()
         self._source_info = SourceInfo(
@@ -382,27 +391,15 @@ class MiracastReceiver(GObject.Object):
             model="",
         )
 
-        # Bind RTSP socket
-        try:
-            self._rtsp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._rtsp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._rtsp_socket.settimeout(_RTSP_RECV_TIMEOUT)
-            # Bind to the P2P interface IP, not 0.0.0.0
-            bind_ip = connection.our_ip
-            self._rtsp_socket.bind((bind_ip, self._rtsp_port))
-            self._rtsp_socket.listen(1)
-            logger.info("RTSP server listening on %s:%d", bind_ip, self._rtsp_port)
-        except OSError as e:
-            error_msg = f"Failed to bind RTSP socket on {connection.our_ip}:{self._rtsp_port}: {e}"
-            logger.error(error_msg)
-            self._running = False
-            GLib.idle_add(self.emit, "stream-error", error_msg)
-            return
+        logger.info(
+            "Starting RTSP client session — connecting to source %s:%d",
+            self._source_ip, self._rtsp_port,
+        )
 
-        # Start RTSP handler thread
+        # Start RTSP client thread
         self._rtsp_thread = threading.Thread(
-            target=self._rtsp_session_loop,
-            name="rtsp-session",
+            target=self._rtsp_client_session,
+            name="rtsp-client",
             daemon=True,
         )
         self._rtsp_thread.start()
@@ -414,6 +411,13 @@ class MiracastReceiver(GObject.Object):
             ReceiverStats with session statistics.
         """
         self._running = False
+
+        # Send TEARDOWN if we have an active session
+        if self._rtsp_socket and self._session_id:
+            try:
+                self._send_teardown()
+            except (OSError, socket.error):
+                pass
 
         # Stop pipeline
         if self._pipeline:
@@ -462,97 +466,163 @@ class MiracastReceiver(GObject.Object):
             frames_dropped=self._frames_dropped,
             errors=self._errors,
             resolution=self._resolution,
-            codec=self._wfd_params.video_codec if self._wfd_params else "",
+            codec=self._video_codec,
         )
 
-    def _rtsp_session_loop(self) -> None:
-        """RTSP session handler running in a dedicated thread.
+    def _rtsp_client_session(self) -> None:
+        """RTSP client session running in a dedicated thread.
 
-        Accepts the incoming RTSP connection from the source and handles
-        the WFD message sequence (M1-M7).
+        Connects to the source's RTSP server and handles the WFD
+        message sequence (M1-M7) from the sink perspective.
         """
-        client_socket: socket.socket | None = None
         try:
-            # Wait for the source to connect
-            logger.debug("Waiting for RTSP connection...")
-            client_socket, addr = self._rtsp_socket.accept()
-            client_socket.settimeout(30.0)
-            peer_ip = addr[0]
-            logger.info("RTSP connection from %s:%d", peer_ip, addr[1])
+            # Connect to source's RTSP server with retries
+            self._rtsp_socket = self._connect_to_source()
+            if not self._rtsp_socket:
+                return
 
-            # NFR-S04: Validate that the RTSP connection comes from the P2P peer
-            if self._connection and self._connection.peer_ip != "0.0.0.0":
-                expected_peer = self._connection.peer_ip
-                if peer_ip != expected_peer:
-                    logger.error(
-                        "Rejecting RTSP connection from %s — expected P2P peer %s",
-                        peer_ip,
-                        expected_peer,
-                    )
-                    client_socket.close()
-                    GLib.idle_add(
-                        self.emit,
-                        "stream-error",
-                        f"RTSP connection from unauthorized address {peer_ip}",
-                    )
-                    return
+            sock = self._rtsp_socket
+            source_ip = self._source_ip
 
-            # Track CSeq for outgoing requests (M2)
-            self._cseq = 0
-            # Track whether M2 has been sent
-            m2_sent = False
-            # Session activity timestamp for timeout tracking
-            last_activity = time.monotonic()
+            logger.info("RTSP connected to source %s:%d", source_ip, self._rtsp_port)
 
-            # Handle RTSP message sequence
-            while self._running:
-                # FR-RN15: Check RTSP session timeout (30s inactivity)
-                if self._session_id:  # Only enforce during active session
-                    idle_time = time.monotonic() - last_activity
-                    if idle_time >= 30.0:
-                        logger.warning("RTSP session timeout — no activity for 30s")
-                        self._stop_pipeline_and_emit()
-                        break
+            # === M1: Source sends OPTIONS, we reply ===
+            data = self._recv_message(sock)
+            if not data:
+                raise RuntimeError("No M1 received from source")
+            logger.info("M1 received: %s", data[:80])
 
-                data = self._recv_rtsp_message(client_socket)
-                if not data:
-                    # Check if it's just a timeout (no data) vs connection closed
-                    if self._running and self._session_id:
-                        # Socket timeout but session active — check session timeout
-                        continue
-                    break
+            # Parse CSeq from M1
+            m1_cseq = self._parse_cseq(data)
+            m1_response = (
+                f"RTSP/1.0 200 OK\r\n"
+                f"CSeq: {m1_cseq}\r\n"
+                f"Public: org.wfa.wfd1.0, SET_PARAMETER, GET_PARAMETER\r\n"
+                f"\r\n"
+            )
+            sock.sendall(m1_response.encode())
+            logger.debug("M1 response sent")
 
-                last_activity = time.monotonic()
+            # === M2: We send OPTIONS to source ===
+            self._cseq += 1
+            m2_request = (
+                f"OPTIONS * RTSP/1.0\r\n"
+                f"CSeq: {self._cseq}\r\n"
+                f"Require: org.wfa.wfd1.0\r\n"
+                f"\r\n"
+            )
+            sock.sendall(m2_request.encode())
+            logger.debug("M2 sent (OPTIONS to source)")
 
-                try:
-                    validate_request_size(data)
-                    request = parse_rtsp_request(data)
-                except RTSPParseError as e:
-                    logger.warning("Malformed RTSP request: %s", e)
-                    error_resp = build_response(e.status_code, 0)
-                    client_socket.sendall(error_resp.serialize())
-                    continue
+            # Read M2 response
+            data = self._recv_message(sock)
+            if not data:
+                raise RuntimeError("No M2 response from source")
+            logger.debug("M2 response: %s", data[:80])
 
-                response = self._handle_rtsp_request(request, client_socket)
-                if response:
-                    client_socket.sendall(response.serialize())
+            # === M3: Source sends GET_PARAMETER, we reply with capabilities ===
+            data = self._recv_message(sock)
+            if not data:
+                raise RuntimeError("No M3 received from source")
+            logger.info("M3 received (capability query)")
 
-                # FR-RN03: After handling M1 (first OPTIONS from source), send M2
-                if request.method == RTSPMethod.OPTIONS and not m2_sent:
-                    m2_sent = True
-                    self._cseq += 1
-                    m2_request = build_options_request(self._cseq)
-                    client_socket.sendall(m2_request)
-                    logger.debug("Sent M2 (OPTIONS to source) CSeq=%d", self._cseq)
-                    # Read and discard the M2 response from source
-                    m2_response_data = self._recv_rtsp_message(client_socket)
-                    if m2_response_data:
-                        last_activity = time.monotonic()
-                        logger.debug("Received M2 response from source")
+            m3_cseq = self._parse_cseq(data)
+            capability_body = self._build_capability_body(data)
+            m3_response = (
+                f"RTSP/1.0 200 OK\r\n"
+                f"CSeq: {m3_cseq}\r\n"
+                f"Content-Type: text/parameters\r\n"
+                f"Content-Length: {len(capability_body)}\r\n"
+                f"\r\n"
+                f"{capability_body}"
+            )
+            sock.sendall(m3_response.encode())
+            logger.debug("M3 response sent (capabilities)")
+
+            # === M4: Source sends SET_PARAMETER (chosen params), we reply OK ===
+            data = self._recv_message(sock)
+            if not data:
+                raise RuntimeError("No M4 received from source")
+            logger.info("M4 received (parameters set)")
+
+            m4_cseq = self._parse_cseq(data)
+            # Parse chosen parameters from M4
+            self._parse_m4_params(data)
+            m4_response = f"RTSP/1.0 200 OK\r\nCSeq: {m4_cseq}\r\n\r\n"
+            sock.sendall(m4_response.encode())
+            logger.debug("M4 response sent")
+
+            # === M5: Source sends SET_PARAMETER (trigger SETUP), we reply OK ===
+            data = self._recv_message(sock)
+            if not data:
+                raise RuntimeError("No M5 received from source")
+            logger.info("M5 received (trigger SETUP)")
+
+            m5_cseq = self._parse_cseq(data)
+            m5_response = f"RTSP/1.0 200 OK\r\nCSeq: {m5_cseq}\r\n\r\n"
+            sock.sendall(m5_response.encode())
+            logger.debug("M5 response sent")
+
+            # === M6: We send SETUP ===
+            self._cseq += 1
+            m6_request = (
+                f"SETUP rtsp://{source_ip}/wfd1.0/streamid=0 RTSP/1.0\r\n"
+                f"CSeq: {self._cseq}\r\n"
+                f"Transport: RTP/AVP/UDP;unicast;client_port={self._rtp_port}\r\n"
+                f"\r\n"
+            )
+            sock.sendall(m6_request.encode())
+            logger.debug("M6 sent (SETUP)")
+
+            # Read M6 response — extract Session ID and server_port
+            data = self._recv_message(sock)
+            if not data:
+                raise RuntimeError("No M6 response from source")
+            logger.info("M6 response: %s", data[:200])
+
+            self._session_id = self._parse_session_id(data)
+            server_port = self._parse_server_port(data)
+            logger.info("Session: %s, server_port: %s", self._session_id, server_port)
+
+            # === Start GStreamer pipeline BEFORE sending PLAY ===
+            # The pipeline will be ready to receive RTP as soon as source starts sending
+            self._start_pipeline()
+
+            # === M7: We send PLAY ===
+            self._cseq += 1
+            m7_request = (
+                f"PLAY rtsp://{source_ip}/wfd1.0/streamid=0 RTSP/1.0\r\n"
+                f"CSeq: {self._cseq}\r\n"
+                f"Session: {self._session_id}\r\n"
+                f"\r\n"
+            )
+            sock.sendall(m7_request.encode())
+            logger.debug("M7 sent (PLAY)")
+
+            # Read M7 response
+            data = self._recv_message(sock)
+            if not data:
+                raise RuntimeError("No M7 response from source")
+            logger.info("M7 response received — streaming active!")
+
+            GLib.idle_add(self.emit, "stream-started")
+
+            # === Streaming phase: handle keep-alive and teardown ===
+            self._streaming_loop(sock)
 
         except socket.timeout:
             if self._running:
-                error_msg = "RTSP connection timeout — no connection within 30 seconds"
+                error_msg = "RTSP connection timeout"
+                logger.error(error_msg)
+                GLib.idle_add(self.emit, "stream-error", error_msg)
+        except (ConnectionRefusedError, ConnectionResetError) as e:
+            if self._running:
+                error_msg = f"RTSP connection refused: {e}"
+                logger.error(error_msg)
+                GLib.idle_add(self.emit, "stream-error", error_msg)
+        except RuntimeError as e:
+            if self._running:
+                error_msg = f"RTSP negotiation failed: {e}"
                 logger.error(error_msg)
                 GLib.idle_add(self.emit, "stream-error", error_msg)
         except OSError as e:
@@ -565,22 +635,124 @@ class MiracastReceiver(GObject.Object):
                 error_msg = f"Unexpected RTSP error: {e}"
                 logger.error(error_msg)
                 GLib.idle_add(self.emit, "stream-error", error_msg)
-        finally:
-            if client_socket:
+
+    def _connect_to_source(self) -> socket.socket | None:
+        """Connect to the source's RTSP server with retries.
+
+        The source may not have its RTSP server ready immediately after
+        DHCP completes, so we retry for up to _RTSP_CONNECT_TIMEOUT seconds.
+
+        Returns:
+            Connected socket or None on failure.
+        """
+        deadline = time.monotonic() + _RTSP_CONNECT_TIMEOUT
+        attempt = 0
+
+        while self._running and time.monotonic() < deadline:
+            attempt += 1
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.settimeout(5.0)
+                sock.connect((self._source_ip, self._rtsp_port))
+                sock.settimeout(_RTSP_RECV_TIMEOUT)
+                logger.info(
+                    "Connected to source RTSP server %s:%d (attempt %d)",
+                    self._source_ip, self._rtsp_port, attempt,
+                )
+                return sock
+            except (ConnectionRefusedError, socket.timeout, OSError) as e:
+                logger.debug(
+                    "RTSP connect attempt %d failed: %s — retrying in 1s",
+                    attempt, e,
+                )
                 try:
-                    client_socket.close()
+                    sock.close()
                 except OSError:
                     pass
+                time.sleep(1.0)
 
-    def _recv_rtsp_message(self, sock: socket.socket) -> bytes | None:
-        """Receive a complete RTSP message from the socket."""
+        if self._running:
+            error_msg = (
+                f"Failed to connect to source RTSP at {self._source_ip}:{self._rtsp_port} "
+                f"after {attempt} attempts"
+            )
+            logger.error(error_msg)
+            GLib.idle_add(self.emit, "stream-error", error_msg)
+        return None
+
+    def _streaming_loop(self, sock: socket.socket) -> None:
+        """Handle the streaming phase — keep-alive and teardown detection.
+
+        After PLAY, the source may send:
+        - GET_PARAMETER (keep-alive) — reply 200 OK
+        - SET_PARAMETER (parameter updates) — reply 200 OK
+        - TEARDOWN — reply 200 OK and stop
+        """
+        # Set socket to non-blocking for the streaming loop
+        sock.setblocking(False)
+
+        while self._running:
+            try:
+                data_bytes = sock.recv(_RTSP_BUFFER_SIZE)
+                if not data_bytes:
+                    # Connection closed by source
+                    logger.info("Source closed RTSP connection")
+                    self._stop_pipeline_and_emit()
+                    return
+
+                data = data_bytes.decode("utf-8", errors="replace")
+
+                if "wfd_trigger_method: TEARDOWN" in data or "TEARDOWN" in data.split("\r\n")[0]:
+                    logger.info("Received TEARDOWN from source")
+                    # Reply OK
+                    cseq = self._parse_cseq(data)
+                    response = f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n"
+                    try:
+                        sock.sendall(response.encode())
+                    except OSError:
+                        pass
+                    self._stop_pipeline_and_emit()
+                    return
+
+                # Handle keep-alive and other messages
+                if "GET_PARAMETER" in data or "SET_PARAMETER" in data:
+                    cseq = self._parse_cseq(data)
+                    response = f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n"
+                    try:
+                        sock.sendall(response.encode())
+                    except OSError:
+                        pass
+
+                    # If SET_PARAMETER contains new video formats, re-start player
+                    if "wfd_video_formats" in data:
+                        logger.info("Source sent updated video formats")
+
+            except socket.error as e:
+                err = e.args[0]
+                if err == errno.EAGAIN or err == errno.EWOULDBLOCK:
+                    # No data available, sleep briefly
+                    time.sleep(0.01)
+                else:
+                    if self._running:
+                        logger.error("Socket error in streaming loop: %s", e)
+                        self._stop_pipeline_and_emit()
+                    return
+
+    def _recv_message(self, sock: socket.socket) -> str | None:
+        """Receive a complete RTSP message from the socket.
+
+        Returns decoded string or None on error/timeout.
+        """
         try:
             data = sock.recv(_RTSP_BUFFER_SIZE)
             if not data:
                 return None
 
-            # Check if we need to read more (Content-Length)
             text = data.decode("utf-8", errors="replace")
+
+            # Check if we need to read more (Content-Length)
             content_length = 0
             for line in text.split("\r\n"):
                 if line.lower().startswith("content-length:"):
@@ -597,96 +769,127 @@ class MiracastReceiver(GObject.Object):
                     body_start = header_end + 4
                     body_received = len(data) - body_start
                     while body_received < content_length:
-                        more = sock.recv(min(content_length - body_received, _RTSP_BUFFER_SIZE))
+                        more = sock.recv(
+                            min(content_length - body_received, _RTSP_BUFFER_SIZE)
+                        )
                         if not more:
                             break
                         data += more
                         body_received += len(more)
 
-            return data
+            return data.decode("utf-8", errors="replace")
         except socket.timeout:
             return None
         except OSError:
             return None
 
-    def _handle_rtsp_request(
-        self, request: RTSPRequest, client_socket: socket.socket
-    ):
-        """Handle a parsed RTSP request and return the response."""
-        from miracast_server.rtsp import RTSPResponse
+    def _parse_cseq(self, data: str) -> int:
+        """Extract CSeq value from an RTSP message."""
+        for line in data.split("\r\n"):
+            if line.lower().startswith("cseq:"):
+                try:
+                    return int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    pass
+        return 0
 
-        logger.debug("RTSP %s %s CSeq=%d", request.method.name, request.uri, request.cseq)
+    def _parse_session_id(self, data: str) -> str:
+        """Extract Session ID from an RTSP response."""
+        for line in data.split("\r\n"):
+            if line.lower().startswith("session:"):
+                # Session: <id>;timeout=30  or  Session: <id>
+                value = line.split(":", 1)[1].strip()
+                return value.split(";")[0].strip()
+        return "0"
 
-        if request.method == RTSPMethod.OPTIONS:
-            return build_options_response(request.cseq)
+    def _parse_server_port(self, data: str) -> str:
+        """Extract server_port from Transport header in SETUP response."""
+        for line in data.split("\r\n"):
+            if line.lower().startswith("transport:"):
+                # Look for server_port=NNNNN
+                parts = line.split(";")
+                for part in parts:
+                    if "server_port=" in part:
+                        return part.split("=")[1].strip()
+        return ""
 
-        elif request.method == RTSPMethod.GET_PARAMETER:
-            # FR-RN13: Distinguish M3 (capability query) from keep-alive (empty body)
-            if not request.body or not request.body.strip():
-                # Keep-alive: respond with 200 OK and no body
-                return build_response(RTSP_OK, request.cseq)
-            else:
-                # M3: Source queries our capabilities
-                body = build_capability_response_body(
-                    rtsp_port=self._rtsp_port,
-                    rtp_port=self._rtp_port,
-                )
-                return build_response(RTSP_OK, request.cseq, body=body)
+    def _build_capability_body(self, m3_data: str) -> str:
+        """Build the M3 capability response body.
 
-        elif request.method == RTSPMethod.SET_PARAMETER:
-            # M4: Source sets selected parameters
-            self._wfd_params = parse_wfd_parameters(request.body)
-            if self._wfd_params.rtp_port:
-                self._rtp_port = self._wfd_params.rtp_port
-            if self._wfd_params.resolution != (0, 0):
-                self._resolution = self._wfd_params.resolution
-            logger.info(
-                "WFD params set: codec=%s rtp_port=%d resolution=%s",
-                self._wfd_params.video_codec,
-                self._rtp_port,
-                self._resolution,
-            )
-            return build_response(RTSP_OK, request.cseq)
+        Replies to the source's GET_PARAMETER query with our supported
+        WFD parameters (matching lazycast's proven working values).
+        """
+        msg = "wfd_client_rtp_ports: RTP/AVP/UDP;unicast {} 0 mode=play\r\n".format(
+            self._rtp_port
+        )
+        msg += "wfd_audio_codecs: AAC 00000001 00\r\n"
+        # Video formats: support most resolutions up to 1080p
+        # Bit 0x0001FEFF = disable 1080p60 (bit 16), keep rest
+        msg += "wfd_video_formats: 00 00 02 10 0001FEFF 3FFFFFFF 00000FFF 00 0000 0000 00 none none\r\n"
+        msg += "wfd_3d_video_formats: none\r\n"
+        msg += "wfd_coupled_sink: none\r\n"
+        msg += "wfd_connector_type: 05\r\n"
+        msg += "wfd_uibc_capability: none\r\n"
+        msg += "wfd_standby_resume_capability: none\r\n"
+        msg += "wfd_content_protection: none\r\n"
 
-        elif request.method == RTSPMethod.SETUP:
-            # M5: Transport setup
-            self._session_id = f"{int(time.time()):08X}"
-            headers = {
-                "Transport": f"RTP/AVP/UDP;unicast;client_port={self._rtp_port}",
-                "Session": f"{self._session_id};timeout=30",
-            }
-            return build_response(RTSP_OK, request.cseq, headers=headers)
+        # Respond to vendor-specific queries if present
+        if "wfd_idr_request_capability" in m3_data:
+            msg += "wfd_idr_request_capability: 1\r\n"
 
-        elif request.method == RTSPMethod.PLAY:
-            # M6: Start streaming — build and start pipeline
-            self._start_pipeline()
-            headers = {"Session": self._session_id}
-            return build_response(RTSP_OK, request.cseq, headers=headers)
+        return msg
 
-        elif request.method == RTSPMethod.TEARDOWN:
-            # M7: Stop streaming
-            self._stop_pipeline_and_emit()
-            headers = {"Session": self._session_id}
-            return build_response(RTSP_OK, request.cseq, headers=headers)
+    def _parse_m4_params(self, data: str) -> None:
+        """Parse M4 SET_PARAMETER message for chosen stream parameters."""
+        # Extract body (after \r\n\r\n)
+        parts = data.split("\r\n\r\n", 1)
+        if len(parts) < 2:
+            return
+        body = parts[1]
 
-        elif request.method == RTSPMethod.PAUSE:
-            if self._pipeline:
-                self._pipeline.set_state(Gst.State.PAUSED)
-            return build_response(RTSP_OK, request.cseq)
+        for line in body.split("\r\n"):
+            if line.startswith("wfd_video_formats:"):
+                # Parse resolution from the video formats line
+                # Format: native timing_flags profile_flags level max_hres max_vres ...
+                logger.debug("M4 video formats: %s", line)
+            elif line.startswith("wfd_audio_codecs:"):
+                if "LPCM" in line:
+                    self._audio_codec = "LPCM"
+                else:
+                    self._audio_codec = "AAC"
+                logger.debug("M4 audio codec: %s", self._audio_codec)
+            elif line.startswith("wfd_client_rtp_ports:"):
+                # Source may override RTP port
+                parts_rtp = line.split()
+                if len(parts_rtp) >= 3:
+                    try:
+                        port = int(parts_rtp[2])
+                        if 1024 <= port <= 65535:
+                            self._rtp_port = port
+                            logger.info("M4 set RTP port to %d", port)
+                    except ValueError:
+                        pass
 
-        else:
-            return build_response(RTSP_BAD_REQUEST, request.cseq)
+    def _send_teardown(self) -> None:
+        """Send TEARDOWN request to the source."""
+        if not self._rtsp_socket or not self._session_id:
+            return
+        self._cseq += 1
+        teardown = (
+            f"TEARDOWN rtsp://{self._source_ip}/wfd1.0/streamid=0 RTSP/1.0\r\n"
+            f"CSeq: {self._cseq}\r\n"
+            f"Session: {self._session_id}\r\n"
+            f"\r\n"
+        )
+        self._rtsp_socket.sendall(teardown.encode())
 
     def _start_pipeline(self) -> None:
         """Build and start the GStreamer pipeline."""
         try:
-            video_codec = self._wfd_params.video_codec if self._wfd_params else "H264"
-            audio_codec = self._wfd_params.audio_codec if self._wfd_params else "AAC"
-
             self._pipeline = self._pipeline_builder.build_pipeline(
                 rtp_port=self._rtp_port,
-                video_codec=video_codec,
-                audio_codec=audio_codec if self._audio_enabled else "AAC",
+                video_codec=self._video_codec,
+                audio_codec=self._audio_codec if self._audio_enabled else "AAC",
                 audio_enabled=self._audio_enabled,
                 use_hw_decode=self._use_hw_decode,
             )
@@ -696,25 +899,24 @@ class MiracastReceiver(GObject.Object):
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message)
 
-            # Start playing
+            # Start playing (don't block waiting for state - it may take time for autovideosink)
             ret = self._pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Pipeline failed to transition to PLAYING")
 
-            # Wait for state change with timeout
-            state_change = self._pipeline.get_state(_PIPELINE_STATE_TIMEOUT_SECONDS * Gst.SECOND)
-            if state_change[0] == Gst.StateChangeReturn.FAILURE:
-                if self._use_hw_decode:
-                    logger.warning("Pipeline failed with HW decode, falling back to software")
-                    self._use_hw_decode = False
-                    self._pipeline.set_state(Gst.State.NULL)
-                    self._pipeline = None
-                    self._start_pipeline()
-                    return
-                raise RuntimeError("Pipeline failed to reach PLAYING state")
-
             self._last_rtp_time = time.monotonic()
-            logger.info("GStreamer pipeline started on port %d", self._rtp_port)
+            logger.info("GStreamer pipeline started, listening on UDP port %d", self._rtp_port)
+
+            # Add a pad probe on udpsrc to track RTP data arrival
+            udpsrc = self._pipeline.get_by_name("udpsrc")
+            if udpsrc:
+                src_pad = udpsrc.get_static_pad("src")
+                if src_pad:
+                    src_pad.add_probe(
+                        Gst.PadProbeType.BUFFER,
+                        self._rtp_buffer_probe,
+                        None,
+                    )
 
             # Start stats monitoring thread
             self._stats_thread = threading.Thread(
@@ -724,13 +926,19 @@ class MiracastReceiver(GObject.Object):
             )
             self._stats_thread.start()
 
-            GLib.idle_add(self.emit, "stream-started")
-
         except Exception as e:
             error_msg = f"Failed to start pipeline: {e}"
             logger.error(error_msg)
             self._errors += 1
             GLib.idle_add(self.emit, "stream-error", error_msg)
+
+    def _rtp_buffer_probe(self, pad, info, user_data) -> Gst.PadProbeReturn:
+        """Pad probe callback to track RTP data arrival for stream health."""
+        buf = info.get_buffer()
+        if buf:
+            self._data_received += buf.get_size()
+            self._last_rtp_time = time.monotonic()
+        return Gst.PadProbeReturn.OK
 
     def _stop_pipeline_and_emit(self) -> None:
         """Stop pipeline and emit stream-stopped with stats."""
@@ -779,13 +987,9 @@ class MiracastReceiver(GObject.Object):
         self._start_pipeline()
 
     def _stats_monitor_loop(self) -> None:
-        """Stats collection thread running at 1-second intervals.
-
-        Monitors stream health, collects bitrate/resolution/frame stats,
-        tracks peak bitrate, and detects stream loss.
-        """
+        """Stats collection thread running at 1-second intervals."""
         last_bytes = 0
-        frame_history: list[tuple[float, int, int]] = []  # (time, decoded, dropped)
+        frame_history: list[tuple[float, int, int]] = []
 
         while self._running and self._pipeline:
             time.sleep(_STATS_INTERVAL_SECONDS)
@@ -795,32 +999,20 @@ class MiracastReceiver(GObject.Object):
 
             now = time.monotonic()
 
-            # Query pipeline position for stats
             try:
-                # Get bytes received from udpsrc
-                udpsrc = self._pipeline.get_by_name("udpsrc")
-                if udpsrc:
-                    # Query bytes-served or similar stat
-                    pass  # GStreamer doesn't expose this directly; use position
-
-                # Calculate bitrate from data received
                 current_bytes = self._data_received
                 bytes_delta = current_bytes - last_bytes
-                bitrate = bytes_delta * 8.0  # bits per second (1s interval)
+                bitrate = bytes_delta * 8.0
                 last_bytes = current_bytes
 
                 self._current_bitrate = bitrate
                 if bitrate > self._peak_bitrate:
                     self._peak_bitrate = bitrate
 
-                # Track frame stats for drop rate monitoring
                 frame_history.append((now, self._frames_decoded, self._frames_dropped))
-
-                # Keep only last 10 seconds of history
                 cutoff = now - _FRAME_DROP_WINDOW_SECONDS
                 frame_history = [(t, d, dr) for t, d, dr in frame_history if t >= cutoff]
 
-                # Check frame drop rate over window
                 if len(frame_history) >= 2:
                     first = frame_history[0]
                     last_entry = frame_history[-1]
@@ -830,12 +1022,11 @@ class MiracastReceiver(GObject.Object):
                         drop_rate = dropped_delta / (decoded_delta + dropped_delta)
                         if drop_rate > _FRAME_DROP_WARNING_THRESHOLD:
                             logger.warning(
-                                "Frame drop rate %.1f%% exceeds threshold (%.0f%%)",
+                                "Frame drop rate %.1f%% exceeds threshold",
                                 drop_rate * 100,
-                                _FRAME_DROP_WARNING_THRESHOLD * 100,
                             )
 
-                # Check for stream loss (no RTP packets for 5 seconds)
+                # Check for stream loss
                 if self._last_rtp_time > 0:
                     silence = now - self._last_rtp_time
                     if silence >= _RTP_TIMEOUT_SECONDS:
@@ -847,7 +1038,6 @@ class MiracastReceiver(GObject.Object):
                         GLib.idle_add(self.emit, "stream-error", error_msg)
                         return
 
-                # Emit stats update
                 stats_dict = {
                     "bitrate": bitrate,
                     "peak_bitrate": self._peak_bitrate,
@@ -866,9 +1056,6 @@ class MiracastReceiver(GObject.Object):
 
     def notify_rtp_data(self, byte_count: int) -> None:
         """Notify the receiver that RTP data was received.
-
-        Called by the pipeline probe or external monitor to update
-        stream health tracking.
 
         Args:
             byte_count: Number of bytes received.

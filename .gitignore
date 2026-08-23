@@ -40,3 +40,9 @@ Thumbs.db
 
 # Local config (don't commit user config)
 config.json
+.env
+
+# kiro
+.kiro/agents/
+.kiro/settings/
+.kiro/hooks-drafts/

@@ -84,7 +84,7 @@ class TestEndToEndGOCreation:
 
 
 class TestEndToEndConnection:
-    """Test: Source connects → DHCP → connection-received."""
+    """Test: Source connects → connection-received."""
 
     @patch("miracast_server.connection.ConnectionHandler._setup_dhcp")
     @patch("miracast_server.connection._run_wpa_cli")
@@ -96,15 +96,17 @@ class TestEndToEndConnection:
 
         handler = ConnectionHandler(p2p_interface="wlx123")
         handler._ctrl_path = "/tmp/test-ctrl"
-        handler._group_interface = "p2p-wlx123-0"
-        handler._current_pin = "12345678"
-        handler._running = True
+
+        # Start listening (this now sets up DHCP)
+        with patch("threading.Thread") as mock_thread:
+            mock_thread.return_value.start = MagicMock()
+            handler.start_listening("p2p-wlx123-0")
+
+        # Verify: DHCP was set up during start_listening
+        mock_dhcp.assert_called_once()
 
         # Simulate AP-STA-CONNECTED event
         handler._handle_sta_connected("be:10:7b:d4:5f:b8")
-
-        # Verify: DHCP was set up
-        mock_dhcp.assert_called_once()
 
         # Verify: connection-received was emitted
         conn_calls = [c for c in mock_idle.call_args_list if "connection-received" in str(c)]

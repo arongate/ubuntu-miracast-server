@@ -27,15 +27,16 @@ from miracast_server.utils import _run_wpa_cli
 
 logger = logging.getLogger(__name__)
 
-# WFD Device Info: Primary Sink (01) + Session Available (10) + WSD (40) = 0x0051
-_WFD_DEVICE_INFO_SUBELEMENT = "000600511C44012C"  # DevInfo=0051, Port=7236, Throughput=300
+# WFD Device Info: Primary Sink (01) + Session Available (10) = 0x0011
+# (matching lazycast's proven working value - no WSD bit which confuses some phones)
+_WFD_DEVICE_INFO_SUBELEMENT = "000600111C44012C"  # DevInfo=0011, Port=7236, Throughput=300
 _WFD_ASSOCIATED_BSSID_SUBELEMENT = "0006000000000000"
 _WFD_COUPLED_SINK_SUBELEMENT = "000700000000000000"
 
 
 def _encode_wfd_device_info(rtsp_port: int) -> str:
     """Encode WFD Device Information sub-element for a Primary Sink."""
-    device_info = 0x0051  # Primary Sink + Session Available + WSD
+    device_info = 0x0011  # Primary Sink + Session Available (proven working)
     throughput = 0x012C  # 300 Mbps
     return f"0006{device_info:04X}{rtsp_port:04X}{throughput:04X}"
 
@@ -128,9 +129,14 @@ class MiracastAdvertiser(GObject.Object):
             self._wpa("wfd_subelem_set", "6", _WFD_COUPLED_SINK_SUBELEMENT)
             self._wpa("set", "device_name", self._device_name, skip_last_validation=True)
             self._wpa("set", "device_type", "7-0050F204-1")
+            self._wpa("set", "p2p_go_ht40", "1")
             logger.debug("WFD subelements configured")
 
-            # Step 3: Create Autonomous P2P Group Owner
+            # Step 3: Start P2P find (makes WFD IEs visible to Miracast sources)
+            self._wpa("p2p_find", "type=progressive", skip_last_validation=True)
+            logger.debug("P2P find started (advertising WFD IEs)")
+
+            # Step 4: Create Autonomous P2P Group Owner
             result = self._wpa("p2p_group_add", "persistent")
             if "FAIL" in result:
                 raise RuntimeError(f"p2p_group_add failed: {result}")
