@@ -20,12 +20,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate changelog
+      - name: Generate changelog (since last stable release)
         id: changelog
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --latest --strip header
+          args: --latest --strip header --skip-tags ".*(beta|rc|alpha).*"
         env:
           OUTPUT: CHANGES.md
           GITHUB_REPO: ${{ github.repository }}
