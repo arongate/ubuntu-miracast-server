@@ -19,14 +19,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Ruff
-        uses: astral-sh/ruff-action@v3
-        with:
-          args: "check src/ tests/"
+        run: pip install ruff --break-system-packages
+
+      - name: Run Ruff check
+        run: ruff check src/ tests/ setup.py
 
       - name: Check formatting
-        uses: astral-sh/ruff-action@v3
-        with:
-          args: "format --check src/ tests/"
+        run: ruff format --check src/ tests/ setup.py
 
   # ─── Type checking ─────────────────────────────────────────────────────────
   typecheck:
@@ -39,12 +38,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-gi python3-gst-1.0 python3-pip python3-venv \
+            python3-gi python3-gst-1.0 python3-venv \
             gir1.2-gtk-4.0 gir1.2-adw-1 \
             gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
-            libgirepository1.0-dev
+            libgirepository1.0-dev gcc python3-dev libcairo2-dev pkg-config
 
-      - name: Install mypy
+      - name: Install mypy in venv
         run: |
           python3 -m venv .venv --system-site-packages
           . .venv/bin/activate
@@ -55,14 +54,10 @@ jobs:
           . .venv/bin/activate
           mypy src/ --ignore-missing-imports
 
-  # ─── Test matrix ────────────────────────────────────────────────────────────
+  # ─── Test ───────────────────────────────────────────────────────────────────
   test:
-    name: Test (Python ${{ matrix.python-version }})
+    name: Test
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -70,13 +65,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-gi python3-gst-1.0 python3-pip python3-venv \
+            python3-gi python3-gst-1.0 python3-venv python3-dev \
             gir1.2-gtk-4.0 gir1.2-adw-1 \
             gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
             gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-            libgirepository1.0-dev
+            libgirepository1.0-dev gcc libcairo2-dev pkg-config
 
-      - name: Install package in venv with system site-packages
+      - name: Install package
         run: |
           python3 -m venv .venv --system-site-packages
           . .venv/bin/activate
@@ -114,11 +109,9 @@ jobs:
       - name: Lint commits
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # Lint all commits in the PR
             commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" \
               --config <(echo "module.exports = {extends: ['@commitlint/config-conventional']}")
           else
-            # On push, lint the pushed commits
             commitlint --from "${{ github.event.before }}" --to "${{ github.event.after }}" \
               --config <(echo "module.exports = {extends: ['@commitlint/config-conventional']}") || true
           fi

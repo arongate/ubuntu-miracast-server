@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Setup script for Ubuntu Miracast Server."""
 
-from setuptools import setup, find_packages
 from pathlib import Path
+
+from setuptools import find_packages, setup
 
 # Get the long description from the README file
 readme_path = Path(__file__).parent / "README.md"
