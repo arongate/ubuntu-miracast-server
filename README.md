@@ -36,7 +36,7 @@ sudo apt install python3-gi python3-gst-1.0 \
     gir1.2-gtk-4.0 gir1.2-adw-1 \
     gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
     gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-    wpasupplicant
+    wpasupplicant dnsmasq
 
 # Clone and install
 git clone https://github.com/arongate/ubuntu-miracast-server.git
@@ -70,13 +70,10 @@ sudo apt install \
     gir1.2-gtk-4.0 gir1.2-adw-1 \
     gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
     gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-    wpasupplicant
+    wpasupplicant dnsmasq
 
 # Optional: hardware-accelerated video decoding
 sudo apt install gstreamer1.0-vaapi
-
-# Optional: DHCP server (needed when acting as P2P Group Owner)
-sudo apt install dnsmasq
 ```
 
 ## Installation
@@ -97,9 +94,7 @@ pip install -e ".[dev]"
 
 ### From Debian Package
 
-```bash
-sudo apt install ./ubuntu-miracast-server_1.0.0-1_all.deb
-```
+*Debian packaging is planned for a future stable release.*
 
 ### From PyPI (when published)
 
@@ -119,8 +114,8 @@ ubuntu-miracast-server
 
 The application will:
 1. Start advertising as a Miracast sink on your Wi-Fi Direct interface
-2. Show a "Waiting for Miracast source..." idle screen
-3. Accept incoming connections and display the received stream
+2. Display a WPS PIN — enter it on your source device to connect
+3. Once connected, negotiate the stream and display the received video
 
 ### CLI Options
 
@@ -161,8 +156,8 @@ Key options:
 |---------|-----|---------|-------------|
 | general | device_name | "Ubuntu Miracast Server" | Advertised device name |
 | general | fullscreen_on_stream | true | Auto-fullscreen when stream starts |
-| streaming | rtsp_port | 7236 | RTSP control port |
-| network | rtp_port | 1028 | RTP media receive port |
+| network | rtsp_port | 7236 | RTSP port on source (standard WFD port) |
+| network | rtp_port | 1028 | Local UDP port for RTP media reception |
 | network | go_intent | 15 | P2P Group Owner intent (0-15) |
 | network | auto_accept | true | Auto-accept incoming connections |
 | service | idle_timeout | 0 | Exit service after N seconds idle (0=disabled) |
@@ -183,10 +178,10 @@ ubuntu-miracast-server/
 ├── src/miracast_server/
 │   ├── app.py              # Application entry point, lifecycle, signal wiring
 │   ├── advertiser.py       # P2P Group Owner creation and WFD advertisement
-│   ├── connection.py       # WPS PIN arming and AP-STA-CONNECTED monitoring
+│   ├── connection.py       # WPS PIN arming, DHCP, AP-STA-CONNECTED monitoring
 │   ├── p2p_supplicant.py   # Dedicated wpa_supplicant instance manager
-│   ├── rtsp.py             # RTSP protocol parsing and WFD negotiation
-│   ├── receiver.py         # GStreamer pipeline and stream management
+│   ├── rtsp.py             # RTSP protocol parsing and WFD message building
+│   ├── receiver.py         # RTSP client (connects to source) + GStreamer pipeline
 │   ├── config.py           # Configuration management with validation
 │   ├── history.py          # Session history persistence
 │   ├── models.py           # Data models with validation
@@ -197,10 +192,11 @@ ubuntu-miracast-server/
 │       ├── display_view.py # Video display with fullscreen support
 │       ├── sessions_view.py# Session history browser
 │       └── settings_view.py# Configuration UI
-├── tests/                  # pytest test suite
-├── debian/                 # Debian packaging
-├── specs/                  # Design specifications
+├── tests/                  # pytest test suite (250 tests)
+├── scripts/                # Security audit scripts
+├── .github/workflows/      # CI/CD (lint, test, security, release)
 ├── docs/                   # User documentation
+├── specs/                  # Design specifications
 └── .kiro/                  # AI agent configuration + protocol knowledge
 ```
 
@@ -210,17 +206,20 @@ ubuntu-miracast-server/
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run tests
+# Run tests (250 tests)
 make test
 
-# Run linting
+# Run linting (ruff + mypy)
 make lint
 
-# Format code
+# Format code (ruff)
 make format
 
 # Run with coverage
 make coverage
+
+# Generate changelog
+make changelog
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
@@ -235,6 +234,7 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## Acknowledgments
 
+- [lazycast](https://github.com/homeworkc/lazycast) for the proven Autonomous GO + WPS PIN approach
 - [wpa_supplicant](https://w1.fi/wpa_supplicant/) for Wi-Fi Direct P2P support
 - [GStreamer](https://gstreamer.freedesktop.org/) for media pipeline infrastructure
 - [GTK](https://gtk.org/) and [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/) for the UI framework
