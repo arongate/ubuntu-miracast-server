@@ -34,7 +34,7 @@ sudo apt install python3-gi python3-gst-1.0 \
     wpasupplicant
 
 # Clone and install
-git clone https://github.com/yourusername/ubuntu-miracast-server.git
+git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
 python3 -m venv .venv --system-site-packages
 source .venv/bin/activate
@@ -79,7 +79,7 @@ sudo apt install dnsmasq
 ### From Source (recommended for development)
 
 ```bash
-git clone https://github.com/yourusername/ubuntu-miracast-server.git
+git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
 
 # Create virtual environment with system site-packages (required for GTK/GStreamer)
@@ -222,7 +222,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 
 ## Related Projects
 
-- [ubuntu-miracast-client](https://github.com/yourusername/ubuntu-miracast-client) — the companion Miracast source (sender) application
+- [ubuntu-miracast-client](https://github.com/arongate/ubuntu-miracast-client) — the companion Miracast source (sender) application
 
 ## License
 

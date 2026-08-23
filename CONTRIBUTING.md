@@ -13,7 +13,7 @@ Thank you for your interest in contributing! This document covers the developmen
 ### Clone and Set Up
 
 ```bash
-git clone https://github.com/yourusername/ubuntu-miracast-server.git
+git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
 
 # Create virtual environment with system site-packages
@@ -41,19 +41,20 @@ make format
 
 ### Style
 
-- **Formatter:** Black (line-length=100)
-- **Import sorting:** isort (Black-compatible profile)
-- **Linting:** flake8
-- **Type checking:** mypy (optional but encouraged)
+- **Linting & formatting:** [Ruff](https://docs.astral.sh/ruff/) (replaces black, isort, flake8)
+- **Type checking:** mypy
+- **Config:** `pyproject.toml` → `[tool.ruff]`
 
 ```bash
-# Format everything
-black --line-length=100 src/ tests/
-isort src/ tests/
+# Format everything (fix lint issues + format)
+make format
 
 # Check without modifying
-black --check --line-length=100 src/ tests/
-flake8 src/ tests/
+make lint
+
+# Or run ruff directly
+ruff check src/ tests/
+ruff format --check src/ tests/
 ```
 
 ### Conventions
@@ -182,7 +183,7 @@ class TestMiracastAdvertiser:
 
 ### Commit Messages
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
+Follow [Conventional Commits](https://www.conventionalcommits.org/) — enforced by CI on both PR titles and individual commits:
 
 ```
 feat: add WPS PIN authentication support
@@ -190,8 +191,20 @@ fix: handle RTSP timeout during renegotiation
 docs: add troubleshooting section for 5GHz channels
 refactor: extract pipeline builder to separate class
 test: add property tests for RTSP CSeq handling
+perf: reduce GStreamer pipeline startup latency
 chore: update GStreamer dependency to 1.22
+ci: add Python 3.12 to test matrix
 ```
+
+**Breaking changes** use `!` after the type or a `BREAKING CHANGE:` footer:
+```
+feat!: change config format from INI to JSON
+
+BREAKING CHANGE: existing config files at ~/.config/ubuntu-miracast-server/
+will need to be recreated.
+```
+
+Commit messages are automatically grouped into the [CHANGELOG.md](CHANGELOG.md) by type on each release.
 
 ### PR Description
 

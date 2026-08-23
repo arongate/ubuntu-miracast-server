@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Lint with Ruff ─────────────────────────────────────────────────────────
+  lint:
+    name: Lint (Ruff)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ruff
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check src/ tests/"
+
+      - name: Check formatting
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check src/ tests/"
+
+  # ─── Type checking ─────────────────────────────────────────────────────────
+  typecheck:
+    name: Type Check (mypy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gst-1.0 \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            libgirepository1.0-dev
+
+      - name: Install Python dependencies
+        run: |
+          pip install mypy PyGObject-stubs
+
+      - name: Run mypy
+        run: mypy src/ --ignore-missing-imports
+
+  # ─── Test matrix ────────────────────────────────────────────────────────────
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gst-1.0 \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+            libgirepository1.0-dev
+
+      - name: Install package
+        run: |
+          pip install -e ".[dev]" --break-system-packages || pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          pytest tests/ --cov=miracast_server --cov-report=xml --cov-report=term-missing -q
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # ─── Commit message lint ────────────────────────────────────────────────────
+  commit-lint:
+    name: Commit Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install commitlint
+        run: |
+          npm install -g @commitlint/cli @commitlint/config-conventional
+
+      - name: Lint PR title
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "${{ github.event.pull_request.title }}" | commitlint --config <(echo "module.exports = {extends: ['@commitlint/config-conventional']}")
+
+      - name: Lint commits
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Lint all commits in the PR
+            commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" \
+              --config <(echo "module.exports = {extends: ['@commitlint/config-conventional']}")
+          else
+            # On push, lint the pushed commits
+            commitlint --from "${{ github.event.before }}" --to "${{ github.event.after }}" \
+              --config <(echo "module.exports = {extends: ['@commitlint/config-conventional']}") || true
+          fi

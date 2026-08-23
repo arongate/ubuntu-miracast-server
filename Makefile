@@ -1,4 +1,4 @@
-.PHONY: all clean build test lint format coverage install uninstall help
+.PHONY: all clean build test lint format coverage install uninstall changelog help
 
 # Default target
 all: build
@@ -8,9 +8,10 @@ help:
 	@echo "Ubuntu Miracast Server - Make targets:"
 	@echo "  make              Build the application"
 	@echo "  make test         Run tests"
-	@echo "  make lint         Run linting checks"
-	@echo "  make format       Format code with black and isort"
+	@echo "  make lint         Run linting checks (ruff + mypy)"
+	@echo "  make format       Format code with ruff"
 	@echo "  make coverage     Run tests with coverage"
+	@echo "  make changelog    Generate CHANGELOG.md from git history"
 	@echo "  make install      Install the application"
 	@echo "  make uninstall    Uninstall the application"
 	@echo "  make clean        Clean build artifacts"
@@ -23,21 +24,24 @@ build:
 test:
 	python3 -m pytest tests/ -v
 
-# Run linting
+# Run linting (ruff check + format check + mypy)
 lint:
-	flake8 src tests
-	mypy src
-	black --check src tests
-	isort --check-only src tests
+	ruff check src/ tests/
+	ruff format --check src/ tests/
+	mypy src/ --ignore-missing-imports
 
-# Format code
+# Format code with ruff
 format:
-	black src tests
-	isort src tests
+	ruff check --fix src/ tests/
+	ruff format src/ tests/
 
 # Run tests with coverage
 coverage:
 	python3 -m pytest tests/ -v --cov=miracast_server --cov-report=html --cov-report=term
+
+# Generate changelog from conventional commits
+changelog:
+	git-cliff --config cliff.toml --output CHANGELOG.md
 
 # Install the application
 install:

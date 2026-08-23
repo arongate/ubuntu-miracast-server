@@ -85,7 +85,7 @@ sudo apt install python3-venv python3-pip git
 ### Option A: From Source (recommended)
 
 ```bash
-git clone https://github.com/yourusername/ubuntu-miracast-server.git
+git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
 
 # Create virtual environment with system site-packages
@@ -114,7 +114,7 @@ sudo apt install ./ubuntu-miracast-server_1.0.0-1_all.deb
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and set up
-git clone https://github.com/yourusername/ubuntu-miracast-server.git
+git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
 uv venv .venv --python /usr/bin/python3 --system-site-packages
 source .venv/bin/activate
