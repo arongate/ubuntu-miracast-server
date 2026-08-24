@@ -94,7 +94,11 @@ pip install -e ".[dev]"
 
 ### From Debian Package
 
-*Debian packaging is planned for a future stable release.*
+Download the `.deb` from the [latest release](https://github.com/arongate/ubuntu-miracast-server/releases):
+
+```bash
+sudo apt install ./ubuntu-miracast-server_*.deb
+```
 
 ### From PyPI (when published)
 
@@ -123,10 +127,11 @@ The application will:
 ubuntu-miracast-server [OPTIONS]
 
 Options:
-  --service       Run in headless service mode (no GUI, uses fakesink)
-  --fullscreen    Start the window in fullscreen mode
-  --name NAME     Override the advertised device name
-  --help          Show help message
+  --service           Run in headless service mode (no GUI, uses fakesink)
+  --fullscreen        Start the window in fullscreen mode
+  --name NAME         Override the advertised device name
+  --interface IFACE   Override the P2P Wi-Fi interface (auto-detected if omitted)
+  --help              Show help message
 ```
 
 ### Service Mode
@@ -156,10 +161,11 @@ Key options:
 |---------|-----|---------|-------------|
 | general | device_name | "Ubuntu Miracast Server" | Advertised device name |
 | general | fullscreen_on_stream | true | Auto-fullscreen when stream starts |
-| network | rtsp_port | 7236 | RTSP port on source (standard WFD port) |
+| streaming | rtsp_port | 7236 | RTSP port on source (standard WFD port) |
 | network | rtp_port | 1028 | Local UDP port for RTP media reception |
 | network | go_intent | 15 | P2P Group Owner intent (0-15) |
 | network | auto_accept | true | Auto-accept incoming connections |
+| network | p2p_interface | "" | P2P interface override (auto-detected if empty) |
 | service | idle_timeout | 0 | Exit service after N seconds idle (0=disabled) |
 
 See [docs/configuration.md](docs/configuration.md) for the full reference.
@@ -223,6 +229,24 @@ make changelog
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
+
+## CI/CD
+
+Every push and pull request runs automated checks:
+
+- **Lint** — Ruff check + format verification
+- **Type Check** — mypy static analysis (advisory)
+- **Test** — 250 tests with coverage reporting
+- **Security Scan** — bandit SAST + custom subprocess safety audit
+- **Commit Lint** — conventional commits enforcement
+
+Releases are automated via tag push (`v*.*.*`):
+- Changelog generated from conventional commits (git-cliff)
+- Python sdist built and attached
+- Debian `.deb` package built and attached
+- GitHub Release created (pre-release for `-beta`/`-rc` tags)
+
+Dependency updates are managed by Dependabot (weekly scans for pip + GitHub Actions).
 
 ## Related Projects
 
