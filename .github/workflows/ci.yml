@@ -18,8 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
       - name: Install Ruff
-        run: pip install ruff --break-system-packages
+        run: uv pip install ruff --system
 
       - name: Run Ruff check
         run: ruff check src/ tests/ setup.py
@@ -34,6 +37,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -43,11 +49,11 @@ jobs:
             gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
             libgirepository1.0-dev gcc python3-dev libcairo2-dev pkg-config
 
-      - name: Install mypy in venv
+      - name: Install mypy
         run: |
-          python3 -m venv .venv --system-site-packages
+          uv venv --system-site-packages
           . .venv/bin/activate
-          pip install mypy
+          uv pip install mypy
 
       - name: Run mypy (advisory)
         run: |
@@ -61,6 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -73,9 +82,9 @@ jobs:
 
       - name: Install package
         run: |
-          python3 -m venv .venv --system-site-packages
+          uv venv --system-site-packages
           . .venv/bin/activate
-          pip install -e ".[dev]"
+          uv pip install -e ".[dev]"
 
       - name: Run tests
         run: |
@@ -95,8 +104,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
       - name: Install security tools
-        run: pip install bandit --break-system-packages
+        run: uv pip install bandit --system
 
       - name: Run bandit (Python SAST)
         run: bandit -r src/ -ll -ii -c pyproject.toml

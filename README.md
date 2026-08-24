@@ -38,12 +38,15 @@ sudo apt install python3-gi python3-gst-1.0 \
     gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
     wpasupplicant dnsmasq
 
+# Install uv (fast Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Clone and install
 git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
-python3 -m venv .venv --system-site-packages
+uv venv --system-site-packages
 source .venv/bin/activate
-pip install -e .
+uv pip install -e .
 
 # Run
 ubuntu-miracast-server
@@ -85,11 +88,11 @@ git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
 
 # Create virtual environment with system site-packages (required for GTK/GStreamer)
-python3 -m venv .venv --system-site-packages
+uv venv --system-site-packages
 source .venv/bin/activate
 
 # Install in development mode
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 ```
 
 ### From Debian Package
@@ -210,7 +213,7 @@ ubuntu-miracast-server/
 
 ```bash
 # Install dev dependencies
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 
 # Run tests (250 tests)
 make test

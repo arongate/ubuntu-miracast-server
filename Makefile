@@ -18,7 +18,7 @@ help:
 
 # Build the application
 build:
-	python3 -m pip install -e .
+	uv pip install -e .
 
 # Run tests
 test:
@@ -45,11 +45,11 @@ changelog:
 
 # Install the application
 install:
-	python3 -m pip install -e .
+	uv pip install -e .
 
 # Uninstall the application
 uninstall:
-	python3 -m pip uninstall -y ubuntu-miracast-server
+	uv pip uninstall ubuntu-miracast-server
 
 # Clean build artifacts
 clean:

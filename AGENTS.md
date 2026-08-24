@@ -15,9 +15,9 @@ Ubuntu Miracast Server — a Python 3.10+ GTK 4 desktop application that acts as
 ### Setup
 
 ```bash
-python3 -m venv .venv --system-site-packages
+uv venv --system-site-packages
 source .venv/bin/activate
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 ```
 
 The `--system-site-packages` flag is **required** — PyGObject and GStreamer bindings must come from system packages, not pip.

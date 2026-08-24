@@ -16,12 +16,15 @@ Thank you for your interest in contributing! This document covers the developmen
 git clone https://github.com/arongate/ubuntu-miracast-server.git
 cd ubuntu-miracast-server
 
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Create virtual environment with system site-packages
-python3 -m venv .venv --system-site-packages
+uv venv --system-site-packages
 source .venv/bin/activate
 
 # Install with development dependencies
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 ```
 
 ### Verify Your Setup
