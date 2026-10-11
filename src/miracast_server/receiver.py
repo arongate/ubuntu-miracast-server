@@ -492,14 +492,14 @@ class MiracastReceiver(GObject.Object):
             data = self._recv_message(sock)
             if not data:
                 raise RuntimeError("No M1 received from source")
-            logger.info("M1 received: %s", data[:80])
+            logger.info("M1 received: %s", data[:120].replace("\r\n", " | "))
 
             # Parse CSeq from M1
             m1_cseq = self._parse_cseq(data)
             m1_response = (
                 f"RTSP/1.0 200 OK\r\n"
                 f"CSeq: {m1_cseq}\r\n"
-                f"Public: org.wfa.wfd1.0, SET_PARAMETER, GET_PARAMETER\r\n"
+                f"Public: org.wfa.wfd1.0, SET_PARAMETER, GET_PARAMETER, SETUP, PLAY, TEARDOWN\r\n"
                 f"\r\n"
             )
             sock.sendall(m1_response.encode())
@@ -513,54 +513,92 @@ class MiracastReceiver(GObject.Object):
             sock.sendall(m2_request.encode())
             logger.debug("M2 sent (OPTIONS to source)")
 
-            # Read M2 response
-            data = self._recv_message(sock)
-            if not data:
-                raise RuntimeError("No M2 response from source")
-            logger.debug("M2 response: %s", data[:80])
+            # === M2 response / M3 / M4 / M5: dispatch by content ===
+            # Xiaomi and some sources send M3 (GET_PARAMETER) as the next message
+            # without a distinct M2 response, or pack multiple messages together.
+            # A strict "wait for M2 response then M3" loop consumes M3 as M2 and
+            # then times out. Dispatch instead.
+            saw_m3 = False
+            saw_m4 = False
+            saw_m5 = False
+            deadline = time.monotonic() + 15.0
 
-            # === M3: Source sends GET_PARAMETER, we reply with capabilities ===
-            data = self._recv_message(sock)
-            if not data:
-                raise RuntimeError("No M3 received from source")
-            logger.info("M3 received (capability query)")
+            while not (saw_m3 and saw_m4 and saw_m5):
+                if time.monotonic() > deadline:
+                    missing = [
+                        name
+                        for name, seen in (("M3", saw_m3), ("M4", saw_m4), ("M5", saw_m5))
+                        if not seen
+                    ]
+                    raise RuntimeError(f"RTSP negotiation timeout waiting for {', '.join(missing)}")
 
-            m3_cseq = self._parse_cseq(data)
-            capability_body = self._build_capability_body(data)
-            m3_response = (
-                f"RTSP/1.0 200 OK\r\n"
-                f"CSeq: {m3_cseq}\r\n"
-                f"Content-Type: text/parameters\r\n"
-                f"Content-Length: {len(capability_body)}\r\n"
-                f"\r\n"
-                f"{capability_body}"
-            )
-            sock.sendall(m3_response.encode())
-            logger.debug("M3 response sent (capabilities)")
+                chunk = self._recv_message(sock)
+                if not chunk:
+                    missing = [
+                        name
+                        for name, seen in (("M3", saw_m3), ("M4", saw_m4), ("M5", saw_m5))
+                        if not seen
+                    ]
+                    raise RuntimeError(f"No {', '.join(missing)} received from source")
 
-            # === M4: Source sends SET_PARAMETER (chosen params), we reply OK ===
-            data = self._recv_message(sock)
-            if not data:
-                raise RuntimeError("No M4 received from source")
-            logger.info("M4 received (parameters set)")
+                # A single recv may contain several RTSP messages
+                for data in self._split_rtsp_messages(chunk):
+                    first_line = data.split("\r\n", 1)[0]
+                    logger.info("RTSP message: %s", first_line)
 
-            m4_cseq = self._parse_cseq(data)
-            # Parse chosen parameters from M4
-            self._parse_m4_params(data)
-            m4_response = f"RTSP/1.0 200 OK\r\nCSeq: {m4_cseq}\r\n\r\n"
-            sock.sendall(m4_response.encode())
-            logger.debug("M4 response sent")
+                    # Response to our M2 OPTIONS — ignore
+                    if first_line.startswith("RTSP/1.0"):
+                        logger.debug("Ignoring RTSP response: %s", first_line)
+                        continue
 
-            # === M5: Source sends SET_PARAMETER (trigger SETUP), we reply OK ===
-            data = self._recv_message(sock)
-            if not data:
-                raise RuntimeError("No M5 received from source")
-            logger.info("M5 received (trigger SETUP)")
+                    method = first_line.split(" ", 1)[0].upper()
 
-            m5_cseq = self._parse_cseq(data)
-            m5_response = f"RTSP/1.0 200 OK\r\nCSeq: {m5_cseq}\r\n\r\n"
-            sock.sendall(m5_response.encode())
-            logger.debug("M5 response sent")
+                    if method == "GET_PARAMETER" and not saw_m3:
+                        saw_m3 = True
+                        logger.info("M3 received (capability query)")
+                        m3_cseq = self._parse_cseq(data)
+                        capability_body = self._build_capability_body(data)
+                        m3_response = (
+                            f"RTSP/1.0 200 OK\r\n"
+                            f"CSeq: {m3_cseq}\r\n"
+                            f"Content-Type: text/parameters\r\n"
+                            f"Content-Length: {len(capability_body.encode())}\r\n"
+                            f"\r\n"
+                            f"{capability_body}"
+                        )
+                        sock.sendall(m3_response.encode())
+                        logger.debug("M3 response sent (capabilities)")
+
+                    elif method == "SET_PARAMETER":
+                        if (
+                            "wfd_trigger_method: SETUP" in data
+                            or "wfd_trigger_method:setup" in data
+                        ):
+                            saw_m5 = True
+                            logger.info("M5 received (trigger SETUP)")
+                            m5_cseq = self._parse_cseq(data)
+                            m5_response = f"RTSP/1.0 200 OK\r\nCSeq: {m5_cseq}\r\n\r\n"
+                            sock.sendall(m5_response.encode())
+                            logger.debug("M5 response sent")
+                        else:
+                            saw_m4 = True
+                            logger.info("M4 received (parameters set)")
+                            m4_cseq = self._parse_cseq(data)
+                            self._parse_m4_params(data)
+                            m4_response = f"RTSP/1.0 200 OK\r\nCSeq: {m4_cseq}\r\n\r\n"
+                            sock.sendall(m4_response.encode())
+                            logger.debug("M4 response sent")
+
+                    elif method == "OPTIONS":
+                        # Source-initiated OPTIONS — reply 200 OK
+                        cseq = self._parse_cseq(data)
+                        sock.sendall(
+                            f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n"
+                            f"Public: org.wfa.wfd1.0, SET_PARAMETER, GET_PARAMETER, SETUP, PLAY, TEARDOWN\r\n"
+                            f"\r\n".encode()
+                        )
+                    else:
+                        logger.debug("Unhandled RTSP method: %s", method)
 
             # === M6: We send SETUP ===
             self._cseq += 1
@@ -610,30 +648,47 @@ class MiracastReceiver(GObject.Object):
             self._streaming_loop(sock)
 
         except TimeoutError:
-            if self._running:
-                error_msg = "RTSP connection timeout"
-                logger.error(error_msg)
-                GLib.idle_add(self.emit, "stream-error", error_msg)
+            error_msg = "RTSP connection timeout"
+            logger.error(error_msg)
+            self._cleanup_failed_session()
+            GLib.idle_add(self.emit, "stream-error", error_msg)
         except (ConnectionRefusedError, ConnectionResetError) as e:
-            if self._running:
-                error_msg = f"RTSP connection refused: {e}"
-                logger.error(error_msg)
-                GLib.idle_add(self.emit, "stream-error", error_msg)
+            error_msg = f"RTSP connection refused: {e}"
+            logger.error(error_msg)
+            self._cleanup_failed_session()
+            GLib.idle_add(self.emit, "stream-error", error_msg)
         except RuntimeError as e:
-            if self._running:
-                error_msg = f"RTSP negotiation failed: {e}"
-                logger.error(error_msg)
-                GLib.idle_add(self.emit, "stream-error", error_msg)
+            error_msg = f"RTSP negotiation failed: {e}"
+            logger.error(error_msg)
+            self._cleanup_failed_session()
+            GLib.idle_add(self.emit, "stream-error", error_msg)
         except OSError as e:
-            if self._running:
-                error_msg = f"RTSP session error: {e}"
-                logger.error(error_msg)
-                GLib.idle_add(self.emit, "stream-error", error_msg)
+            error_msg = f"RTSP session error: {e}"
+            logger.error(error_msg)
+            self._cleanup_failed_session()
+            GLib.idle_add(self.emit, "stream-error", error_msg)
         except Exception as e:
-            if self._running:
-                error_msg = f"Unexpected RTSP error: {e}"
-                logger.error(error_msg)
-                GLib.idle_add(self.emit, "stream-error", error_msg)
+            error_msg = f"Unexpected RTSP error: {e}"
+            logger.error(error_msg)
+            self._cleanup_failed_session()
+            GLib.idle_add(self.emit, "stream-error", error_msg)
+
+    def _cleanup_failed_session(self) -> None:
+        """Reset receiver state after a failed session so the next source can connect."""
+        self._running = False
+        self._session_id = ""
+        if self._pipeline:
+            try:
+                self._pipeline.set_state(Gst.State.NULL)
+            except Exception:
+                pass
+            self._pipeline = None
+        if self._rtsp_socket:
+            try:
+                self._rtsp_socket.close()
+            except OSError:
+                pass
+            self._rtsp_socket = None
 
     def _connect_to_source(self) -> socket.socket | None:
         """Connect to the source's RTSP server with retries.
@@ -741,6 +796,38 @@ class MiracastReceiver(GObject.Object):
                         logger.error("Socket error in streaming loop: %s", e)
                         self._stop_pipeline_and_emit()
                     return
+
+    def _split_rtsp_messages(self, text: str) -> list[str]:
+        """Split a buffer that may contain multiple RTSP messages.
+
+        Messages are separated by a blank line; Content-Length bodies are kept
+        with their headers.
+        """
+        messages: list[str] = []
+        buf = text
+        while buf:
+            header_end = buf.find("\r\n\r\n")
+            if header_end < 0:
+                if buf.strip():
+                    messages.append(buf)
+                break
+            headers = buf[: header_end + 4]
+            content_length = 0
+            for line in headers.split("\r\n"):
+                if line.lower().startswith("content-length:"):
+                    try:
+                        content_length = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        pass
+                    break
+            body_end = header_end + 4 + max(content_length, 0)
+            if content_length > 0 and len(buf) < body_end:
+                # Incomplete body — treat remainder as one message
+                messages.append(buf)
+                break
+            messages.append(buf[:body_end])
+            buf = buf[body_end:]
+        return messages
 
     def _recv_message(self, sock: socket.socket) -> str | None:
         """Receive a complete RTSP message from the socket.

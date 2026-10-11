@@ -213,3 +213,56 @@ class TestCapabilityResponse:
     def test_custom_port(self):
         body = build_capability_response_body(rtp_port=5000)
         assert "5000" in body
+
+
+class TestRTSPMessageSplitting:
+    """Pipelined RTSP messages must be split before dispatch.
+
+    Some sources (e.g. Xiaomi Miracast) deliver the OPTIONS response and the
+    following GET_PARAMETER (M3) in a single TCP segment. Treating the whole
+    segment as one message consumes M3 and stalls negotiation.
+    """
+
+    def _split(self, text: str) -> list[str]:
+        # Avoid GObject/GStreamer init — call the unbound helper via a dummy.
+        from miracast_server.receiver import MiracastReceiver
+
+        return MiracastReceiver._split_rtsp_messages(
+            MiracastReceiver.__new__(MiracastReceiver), text
+        )
+
+    def test_splits_options_response_and_get_parameter(self):
+        chunk = (
+            "RTSP/1.0 200 OK\r\nCSeq: 101\r\n\r\n"
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\n"
+            "CSeq: 1\r\n\r\n"
+        )
+        messages = self._split(chunk)
+        assert len(messages) == 2
+        assert messages[0].startswith("RTSP/1.0 200 OK")
+        assert messages[1].startswith("GET_PARAMETER")
+
+    def test_keeps_content_length_body_with_headers(self):
+        body = "wfd_video_formats: 00 00 02 10"
+        chunk = (
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\n"
+            f"CSeq: 1\r\nContent-Length: {len(body)}\r\n\r\n{body}"
+            "SET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\nCSeq: 2\r\n\r\n"
+        )
+        messages = self._split(chunk)
+        assert len(messages) == 2
+        assert body in messages[0]
+        assert messages[1].startswith("SET_PARAMETER")
+
+    def test_single_message(self):
+        messages = self._split("OPTIONS * RTSP/1.0\r\nCSeq: 0\r\n\r\n")
+        assert len(messages) == 1
+        assert messages[0].startswith("OPTIONS")
+
+    def test_incomplete_body_stays_together(self):
+        chunk = (
+            "GET_PARAMETER rtsp://localhost/wfd1.0 RTSP/1.0\r\n"
+            "CSeq: 1\r\nContent-Length: 100\r\n\r\npartial-body"
+        )
+        messages = self._split(chunk)
+        assert len(messages) == 1
